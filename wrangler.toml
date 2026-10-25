@@ -1,4 +1,4 @@
-name = "Free-ip-hub"
+name = "free-ip-hub"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
 keep_vars = true
