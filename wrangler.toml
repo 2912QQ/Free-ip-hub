@@ -1,11 +1,12 @@
-name = "resi-proxy-hub"
+name = "Free-ip-hub"
 main = "src/index.js"
 compatibility_date = "2025-01-01"
+keep_vars = true
 
 [[d1_databases]]
 binding = "DB"
 database_name = "proxy-db"
-database_id = "REPLACE_WITH_YOUR_D1_ID"   # wrangler d1 create proxy-db 后填入
+database_id = "f14ba212-074c-44b9-9332-7450e6a4dc9a"   # wrangler d1 create proxy-db 后填入
 
 # 把 agent.py / install.sh / panel.html 作为文本打包进 Worker
 [[rules]]
