@@ -81,7 +81,9 @@ async function heartbeat(req, env) {
   if (!/^[\w.-]+$/.test(id)) return json({ error: "bad node_id" }, 400);
 
   const now = Date.now();
-  const host = req.headers.get("CF-Connecting-IP") || "";
+  const host = /^\d{1,3}(\.\d{1,3}){3}$/.test(b.public_ip || "")
+  ? b.public_ip
+  : req.headers.get("CF-Connecting-IP") || "";
   const db = env.DB;
 
   await db
