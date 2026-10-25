@@ -58,6 +58,11 @@ def apply_policy(r):
         port_ev.set()
     S["ready"] = True
 
+def get_public_ip():
+    try:
+        return urllib.request.urlopen("https://api.ipify.org", timeout=8).read().decode().strip()
+    except Exception:
+        return ""
 
 async def heartbeat_loop():
     loop = asyncio.get_running_loop()
