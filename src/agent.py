@@ -3,7 +3,7 @@
 
 只依赖 Python3 标准库 + openvpn + iproute2。必须以 root 运行（SO_BINDTODEVICE / ip rule）。
 """
-import asyncio, base64, csv, hmac, io, ipaddress, json, os, random, socket, struct, time
+import asyncio, base64, csv, hmac, io, ipaddress, json, os, random, re, socket, struct, time
 import urllib.request
 from collections import deque
 from urllib.parse import urlsplit
@@ -16,11 +16,14 @@ ALLOW_HOSTING = os.environ.get("ALLOW_HOSTING", "0") == "1"  # 1 = 不过滤机�
 DEV, TABLE = "tun_rp", "100"
 VPNGATE_API = "http://www.vpngate.net/api/iphone/"
 SO_BINDTODEVICE = getattr(socket, "SO_BINDTODEVICE", 25)
+SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "900"))  # 自动扫描间隔（秒）
 
 S = dict(country="US", port=7920, user="", pw="", nonce=None, ready=False, status="starting",
          exit_ip="", cc="", isp="", hosting=False, latency=0)
+# 扫描状态：res = 住宅 IP -> 实测延迟；bad = 已确认的机房 IP（建链时直接跳过）
+SCAN = dict(state="idle", ts=0, nonce=None, res={}, bad=set())
 PENDING = deque(maxlen=200)
-rotate_ev = port_ev = SEM = None  # 在 main() 里创建，兼容 Python 3.9
+rotate_ev = port_ev = scan_ev = SEM = None  # 在 main() 里创建，兼容 Python 3.9
 
 
 def log(msg):
@@ -52,6 +55,14 @@ def apply_policy(r):
     if S["ready"] and country != S["country"]:
         log(f"目标国家变更 {S['country']} -> {country}")
         rotate_ev.set()
+    sn = r.get("scan_nonce", 0)
+    if SCAN["nonce"] is None:
+        SCAN["nonce"] = sn
+    elif sn != SCAN["nonce"]:
+        SCAN["nonce"] = sn
+        if SCAN["state"] != "scanning":
+            log("收到面板的扫描指令")
+            scan_ev.set()
     S["country"] = country
     if port != S["port"]:
         S["port"] = port
@@ -69,7 +80,8 @@ async def heartbeat_loop():
     while True:
         lines = [PENDING.popleft() for _ in range(min(20, len(PENDING)))]
         body = dict(node_id=NODE_ID, status=S["status"], exit_ip=S["exit_ip"], country=S["cc"],
-                    isp=S["isp"], hosting=S["hosting"], latency=S["latency"], port=S["port"], logs=lines)
+                    isp=S["isp"], hosting=S["hosting"], latency=S["latency"], port=S["port"], logs=lines,
+                    scan_state=SCAN["state"], scan_at=SCAN["ts"])
         try:
             apply_policy(await loop.run_in_executor(None, hub_post, "/api/agent/heartbeat", body))
         except Exception as e:
@@ -198,6 +210,126 @@ async def tcp_alive(c):
         return False
 
 
+
+# ---------------------------------------------------------------- 住宅 IP 扫描
+def ipapi_batch(ips):
+    """ip-api 批量接口：每次最多 100 个，免费额度 15 次/分钟。"""
+    fields = "status,query,country,countryCode,regionName,city,isp,org,hosting,proxy,mobile"
+    body = json.dumps([{"query": ip, "fields": fields, "lang": "zh-CN"} for ip in ips]).encode()
+    req = urllib.request.Request("http://ip-api.com/batch", data=body,
+                                 headers={"Content-Type": "application/json", "User-Agent": "resi-agent/1.1"})
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read())
+
+
+async def tcp_rtt(host, port, n=3):
+    """真实 TCP 握手耗时（取中位数），从本 VPS 的默认出口测量，不经隧道。"""
+    vals = []
+    for _ in range(n):
+        t = time.perf_counter()
+        try:
+            _, w = await asyncio.wait_for(asyncio.open_connection(host, port), 3)
+            vals.append((time.perf_counter() - t) * 1000)
+            w.close()
+        except Exception:
+            pass
+    return int(sorted(vals)[len(vals) // 2]) if vals else None
+
+
+async def icmp_rtt(host):
+    try:
+        p = await asyncio.create_subprocess_exec("ping", "-n", "-c", "3", "-W", "2", host,
+                                                 stdout=asyncio.subprocess.PIPE,
+                                                 stderr=asyncio.subprocess.DEVNULL)
+        out, _ = await asyncio.wait_for(p.communicate(), 10)
+    except Exception:
+        return None
+    m = re.search(rb"= [\d.]+/([\d.]+)/", out)
+    return int(float(m.group(1))) if m else None
+
+
+async def measure(c):
+    """TCP 节点测握手；UDP 节点用 ICMP；都不通则退回 VPNGate 自报值并标注来源。"""
+    if c["proto"] == "tcp":
+        ms = await tcp_rtt(c["host"], c["port"])
+        if ms is not None:
+            return ms, "tcp"
+    ms = await icmp_rtt(c["host"])
+    if ms is not None:
+        return ms, "icmp"
+    if c["ping"] < 9999:
+        return c["ping"], "vpngate"
+    return None, "none"
+
+
+async def scan_once():
+    loop = asyncio.get_running_loop()
+    SCAN["state"] = "scanning"
+    t0 = time.time()
+    try:
+        cands = await loop.run_in_executor(None, fetch_vpngate)
+        uniq = {c["ip"]: c for c in cands if re.fullmatch(r"\d{1,3}(\.\d{1,3}){3}", c["ip"])}
+        ips = list(uniq)
+        log(f"开始扫描 {len(ips)} 个 VPNGate 节点（IP 类型 + 实测延迟）")
+
+        info = {}
+        for i in range(0, len(ips), 100):
+            for attempt in range(2):
+                try:
+                    for r in await loop.run_in_executor(None, ipapi_batch, ips[i:i + 100]):
+                        if r.get("status") == "success":
+                            info[r["query"]] = r
+                    break
+                except Exception as e:
+                    log(f"ip-api 批量查询失败: {e}")
+                    await asyncio.sleep(30 if attempt == 0 else 0)
+            await asyncio.sleep(4.5)
+
+        sem = asyncio.Semaphore(30)
+
+        async def one(ip):
+            c, r = uniq[ip], info[ip]
+            async with sem:
+                ms, method = await measure(c)
+            hosting, mobile = bool(r.get("hosting")), bool(r.get("mobile"))
+            return dict(ip=ip, host=c["host"], port=c["port"], proto=c["proto"], cc=c["cc"],
+                        country=r.get("country", ""), region=r.get("regionName", ""), city=r.get("city", ""),
+                        isp=r.get("isp", ""), org=r.get("org", ""), hosting=hosting,
+                        proxy=bool(r.get("proxy")), mobile=mobile,
+                        residential=not hosting and not mobile,
+                        latency=ms, method=method, score=c["score"])
+
+        items = [x for x in await asyncio.gather(*(one(ip) for ip in ips if ip in info))]
+        SCAN["res"] = {x["ip"]: (x["latency"] if x["latency"] is not None else 9999)
+                       for x in items if x["residential"]}
+        SCAN["bad"] = {x["ip"] for x in items if x["hosting"]}
+
+        scan_id = int(time.time() * 1000)
+        chunks = [items[i:i + 80] for i in range(0, len(items), 80)] or [[]]
+        for n, chunk in enumerate(chunks):
+            await loop.run_in_executor(None, hub_post, "/api/agent/scan", dict(
+                node_id=NODE_ID, scan_id=scan_id, items=chunk, last=n == len(chunks) - 1))
+        SCAN["ts"] = int(time.time() * 1000)
+        ok = sum(1 for x in items if x["residential"] and x["latency"] is not None)
+        log(f"扫描完成：{len(items)} 条，可达住宅 IP {ok} 条，用时 {int(time.time() - t0)}s")
+    finally:
+        SCAN["state"] = "idle"
+
+
+async def scan_loop():
+    await asyncio.sleep(5)
+    while True:
+        scan_ev.clear()
+        try:
+            await scan_once()
+        except Exception as e:
+            log(f"扫描失败: {e}")
+        try:
+            await asyncio.wait_for(scan_ev.wait(), SCAN_INTERVAL)
+        except asyncio.TimeoutError:
+            pass
+
+
 async def sh(*cmd):
     p = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.DEVNULL,
                                              stderr=asyncio.subprocess.DEVNULL)
@@ -317,7 +449,10 @@ async def tunnel_loop():
             await asyncio.sleep(30)
             continue
         cands = [c for c in cache if (want == "ANY" or c["cc"] == want) and c["ip"] not in black]
-        cands.sort(key=lambda c: (-c["score"], c["ping"]))
+        if not ALLOW_HOSTING:
+            cands = [c for c in cands if c["ip"] not in SCAN["bad"]]  # 扫描已确认是机房 IP，不浪费建链时间
+        cands.sort(key=lambda c: (c["ip"] not in SCAN["res"], SCAN["res"].get(c["ip"], 99999),
+                                  -c["score"], c["ping"]))
         alive = await asyncio.gather(*(tcp_alive(c) for c in cands[:40]))
         cands = [c for c, ok in zip(cands[:40], alive) if ok]
         if not cands:
@@ -504,14 +639,14 @@ async def proxy_supervisor():
 
 
 async def main():
-    global rotate_ev, port_ev, SEM
-    rotate_ev, port_ev, SEM = asyncio.Event(), asyncio.Event(), asyncio.Semaphore(500)
+    global rotate_ev, port_ev, scan_ev, SEM
+    rotate_ev, port_ev, scan_ev, SEM = asyncio.Event(), asyncio.Event(), asyncio.Event(), asyncio.Semaphore(500)
     os.makedirs(WORKDIR, exist_ok=True)
     await cleanup_routes()
     asyncio.create_task(heartbeat_loop())
     while not S["ready"]:
         await asyncio.sleep(1)
-    await asyncio.gather(proxy_supervisor(), tunnel_loop())
+    await asyncio.gather(proxy_supervisor(), tunnel_loop(), scan_loop())
 
 
 if __name__ == "__main__":

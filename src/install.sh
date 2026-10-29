@@ -8,10 +8,10 @@ TOKEN="__TOKEN__"
 [ -c /dev/net/tun ] || { echo "缺少 /dev/net/tun，请先在 VPS 控制台开启 TUN/TAP"; exit 1; }
 
 if command -v apt-get >/dev/null 2>&1; then
-  apt-get update -y && apt-get install -y openvpn python3 iproute2 curl
+  apt-get update -y && apt-get install -y openvpn python3 iproute2 curl iputils-ping
 elif command -v dnf >/dev/null 2>&1; then
   dnf install -y epel-release || true
-  dnf install -y openvpn python3 iproute curl
+  dnf install -y openvpn python3 iproute curl iputils
 else
   echo "仅支持 Debian/Ubuntu/RHEL 系"; exit 1
 fi

@@ -51,6 +51,24 @@ curl -u admin:密码 "https://你的worker域名/api/proxies?scheme=http"     # 
 curl --proxy socks5h://proxy:密码@VPS_IP:7920 https://api.ipify.org     # 验证出口
 ```
 
+## 住宅 IP 扫描
+
+agent 启动后每 15 分钟（`SCAN_INTERVAL` 环境变量，秒）自动扫描一轮，面板也可点「立即扫描」：
+
+1. 拉取 VPNGate 全量节点，用 ip-api 批量接口查出每个 IP 的国家 / 地区 / 城市 / ISP，并判定类型（机房 / 移动 / 住宅）。
+2. 从 VPS 实测到每个 IP 的延迟：TCP 节点测握手（3 次取中位数），UDP 节点测 ICMP，都失败才退回 VPNGate 自报值（面板标「自报」）。
+3. 结果上报到 Worker（D1 表 `scan_ips`），在面板「住宅 IP 扫描」区块按国家、类型、延迟筛选排序。
+4. 建链时 agent 优先使用扫描出的低延迟住宅 IP，并跳过已确认的机房 IP。
+
+```bash
+curl -u admin:密码 "https://你的worker域名/api/scan?type=residential&country=JP,US&max_latency=150"   # JSON
+curl -u admin:密码 "https://你的worker域名/api/scan?type=residential&format=text"                      # IP:端口 列表
+```
+
+参数：`type`（all/residential/hosting）、`country`（逗号分隔国家码）、`max_latency`（ms）、`reachable=1`、`limit`。
+
+> 老用户升级：直接重新部署 Worker（D1 会自动补列建表），VPS 上重新执行一遍面板里的安装命令即可更新 agent，并补装 `ping`。
+
 ## 目录
 
 | 文件 | 作用 |
@@ -64,6 +82,8 @@ curl --proxy socks5h://proxy:密码@VPS_IP:7920 https://api.ipify.org     # 验�
 ## 已知限制
 
 - VPNGate 是志愿者节点，**“家宽”属性靠 ip-api 的 hosting 标记过滤，只能做到尽力而为**；出口质量、稳定性、速度都有波动，不适合需要稳定 SLA 的场景。
+- 扫描判定的是 VPNGate 服务器 IP；VPNGate 绝大多数节点出口 IP 与服务器 IP 相同，但不保证。真正的出口类型以建链后 `verify` 的检测为准。
+- ip-api 批量接口免费额度为 15 次/分钟，每轮扫描只用 2–3 次，别把扫描间隔调得太短。
 - 目前是单隧道 + 自动重选；参考项目里的“主备双隧道零中断切换”可作为下一步（在 agent 里并行维护两个 tun 设备并用 ip rule 切换）。
 - ip-api 免费接口仅 HTTP、有频率限制（只在建链时调用一次）；需要更严格的 IP 质检可换成 IPinfo / IP2Location 等付费 API。
 - 免费节点由第三方运营，**不要通过它传输敏感信息**。
