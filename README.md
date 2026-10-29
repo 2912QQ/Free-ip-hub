@@ -92,6 +92,13 @@ curl -u admin:密码 "https://你的worker域名/api/diag"                    # 
 curl -u admin:密码 -X POST -H 'content-type: application/json' -d '{"mode":"latency","country":"JP","port":7920,"max_conns":500,"proxy_enabled":true}' "https://你的worker域名/api/policy"
 ```
 
+## 状态栏与壁纸同步
+
+- 面板顶部状态栏：**当前节点总数**（在线 / 代理就绪）、**当前可用住宅数**（可达且不在黑名单国家）、**可用国家 / 地区**、**黑名单**（即「不连接的国家」）。
+- 表格自适应宽度，不再横向滚动；窄屏（≤960px）自动变成卡片。
+- 壁纸与透明度存放在 Cloudflare KV（binding 名 `KV`），任意设备打开面板约 30 秒内同步。KV 是最终一致的，跨地区可能再延迟约 1 分钟。未绑定 KV 时壁纸只保存在本机，其余功能不受影响。
+- API：`GET /api/bg?since=<ts>`、`POST /api/bg {"img":"data:image/...|https://...|\"\"","op":88}`。
+
 ## 目录
 
 | 文件 | 作用 |

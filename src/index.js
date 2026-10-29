@@ -5,7 +5,7 @@ import PANEL_HTML from "./panel.html";
 
 const ONLINE_MS = 60_000;
 const LOG_KEEP_MS = 3 * 24 * 3600 * 1000; // 日志只保留 3 天
-const VERSION = "1.2.0";
+const VERSION = "1.3.0";
 const MODES = ["country", "latency", "speed"];
 const enc = new TextEncoder();
 
@@ -473,6 +473,44 @@ async function proxies(req, env) {
   return text(list.map((x) => x.url).join("\n") + (list.length ? "\n" : ""));
 }
 
+// ---------- 壁纸同步（Cloudflare KV） ----------
+const BG_MAX = 7_000_000; // 压缩后的 data URL 通常 < 1MB
+const bgMeta = async (env) => (await env.KV.get("bg:meta", "json")) || { ts: 0, op: 88, has: false };
+
+async function bgGet(req, env) {
+  if (!env.KV) return json({ error: "KV 未绑定" }, 501);
+  const since = toInt(new URL(req.url).searchParams.get("since"), 0);
+  const m = await bgMeta(env);
+  const out = { ts: m.ts || 0, op: m.op || 88 };
+  // 客户端已是最新时不再读图片，省 KV 读取与流量
+  if (out.ts > since) out.img = m.has ? (await env.KV.get("bg:img")) || "" : "";
+  return json(out);
+}
+
+async function bgSet(req, env) {
+  if (!env.KV) return json({ error: "KV 未绑定" }, 501);
+  const b = await readJson(req);
+  if (!b) return json({ error: "bad json" }, 400);
+  const cur = await bgMeta(env);
+  let op = cur.op || 88, has = !!cur.has;
+  if (b.op !== undefined) op = Math.min(100, Math.max(40, toInt(b.op, 88)));
+  if (b.img !== undefined) {
+    const img = String(b.img);
+    if (img === "") { await env.KV.delete("bg:img"); has = false; }
+    else {
+      const okData = /^data:image\/(jpeg|png|webp|gif);base64,[A-Za-z0-9+/=]+$/.test(img);
+      const okUrl = img.length <= 2000 && /^https:\/\/\S+$/i.test(img);
+      if (!okData && !okUrl) return json({ error: "图片格式不支持（仅 jpeg/png/webp/gif 或 https 链接）" }, 400);
+      if (img.length > BG_MAX) return json({ error: "图片过大" }, 413);
+      await env.KV.put("bg:img", img);
+      has = true;
+    }
+  }
+  const ts = Math.max(Date.now(), (cur.ts || 0) + 1);
+  await env.KV.put("bg:meta", JSON.stringify({ ts, op, has }));
+  return json({ ok: true, ts, op });
+}
+
 // ---------- router ----------
 export default {
   async fetch(req, env) {
@@ -521,6 +559,8 @@ export default {
             "referrer-policy": "no-referrer",
           },
         });
+      if (path === "/api/bg" && req.method === "GET") return await bgGet(req, env);
+      if (path === "/api/bg" && req.method === "POST") return await bgSet(req, env);
       if (path === "/api/state" && req.method === "GET") return await state(req, env);
       if (path === "/api/proxies" && req.method === "GET") return await proxies(req, env);
       if (path === "/api/scan" && req.method === "GET") return await scanList(req, env);

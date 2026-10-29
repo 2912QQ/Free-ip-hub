@@ -8,6 +8,11 @@ binding = "DB"
 database_name = "proxy-db"
 database_id = "f14ba212-074c-44b9-9332-7450e6a4dc9a"   # wrangler d1 create proxy-db 后填入
 
+# 壁纸跨设备同步用的 KV。留空 id：wrangler >= 4.45 部署时会自动创建；
+# 也可手动 `npx wrangler kv namespace create BG_KV`，再加一行 id = "输出的 id"
+[[kv_namespaces]]
+binding = "KV"
+
 # 把 agent.py / install.sh / panel.html 作为文本打包进 Worker
 [[rules]]
 type = "Text"

@@ -16,31 +16,33 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--ink:#e4ecef;--muted:#93a5af;--paper:#0f171c;--card:#16222a;--line:#2a3a44;--up:#35c2ad;--warn:#e0a446;--down:#ef7a6c;--accent:#6bb7e6;color-scheme:dark}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.5 var(--sans)}
-main{max-width:1080px;margin:0 auto;padding:24px 16px 48px}
+html{overflow-x:hidden}
+main{max-width:1200px;margin:0 auto;padding:24px 16px 48px}
 h1{font-size:22px;margin:0 0 4px;font-weight:650;letter-spacing:.01em}
 .sub{color:var(--muted);margin:0 0 20px}
-section{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:16px;margin-bottom:16px}
+section{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:16px;margin-bottom:16px;min-width:0}
 h2{font-size:15px;margin:0 0 12px;font-weight:650}
 .warn{border-left:4px solid var(--warn);padding:8px 12px;margin-bottom:16px;background:var(--card);color:var(--ink)}
-.table-wrap{overflow-x:auto}
-table{border-collapse:collapse;width:100%;min-width:720px}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+.table-wrap{overflow:visible}
+table{border-collapse:collapse;width:100%;table-layout:auto}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);overflow-wrap:anywhere;font-size:13.5px;vertical-align:middle}
 th{font-weight:600;color:var(--muted);font-size:13px}
-td.mono,.mono{font-family:var(--mono);font-size:13px}
+td.mono,.mono{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
 .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px;background:var(--muted)}
 .dot.up{background:var(--up)} .dot.connecting{background:var(--warn)} .dot.off{background:var(--down)}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:end}
 label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 input,textarea{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:7px 9px}
 input{width:130px}
-textarea{width:100%;min-height:90px;font-family:var(--mono);font-size:12.5px;resize:vertical}
+input,select{max-width:100%}
+textarea{width:100%;min-height:90px;font-family:var(--mono);font-size:12.5px;resize:vertical;white-space:pre-wrap;overflow-wrap:anywhere}
 button{font:inherit;cursor:pointer;color:#fff;background:var(--accent);border:0;border-radius:4px;padding:7px 14px}
 button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);padding:4px 10px;font-size:13px}
 button.danger{color:var(--down)}
 button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-pre{margin:0;max-height:260px;overflow:auto;font:12.5px/1.6 var(--mono);color:var(--muted)}
+pre{margin:0;max-height:260px;overflow-x:hidden;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12.5px/1.6 var(--mono);color:var(--muted)}
 .cmd{display:flex;gap:8px;align-items:center}
-.cmd code{flex:1;overflow-x:auto;white-space:nowrap;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:7px 9px;font-family:var(--mono);font-size:12.5px}
+.cmd code{flex:1;min-width:0;white-space:normal;word-break:break-all;background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:7px 9px;font-family:var(--mono);font-size:12.5px}
 .empty{color:var(--muted);padding:12px 0}
 .flag{color:var(--warn)}
 .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;border:1px solid var(--line);color:var(--muted)}
@@ -51,7 +53,7 @@ pre{margin:0;max-height:260px;overflow:auto;font:12.5px/1.6 var(--mono);color:va
 select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:7px 9px}
 .stats{display:flex;gap:20px;flex-wrap:wrap;margin:0 0 12px;color:var(--muted);font-size:13px}
 .stats b{color:var(--ink);font-size:18px;display:block;font-weight:650}
-.scroll{max-height:520px;overflow:auto}
+.scroll{max-height:520px;overflow-x:hidden;overflow-y:auto}
 thead th{position:sticky;top:0;background:var(--card)}
 details.ex{margin-top:12px}
 details.ex summary{cursor:pointer;color:var(--ink)}
@@ -59,13 +61,34 @@ details.ex summary{cursor:pointer;color:var(--ink)}
 .tabs button{padding:6px 14px;font-size:14px;color:var(--ink)}
 .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 body.has-bg{background-size:cover;background-position:center;background-attachment:fixed;background-repeat:no-repeat}
-body.has-bg section,body.has-bg .head{background:color-mix(in srgb,var(--card) var(--card-a,88%),transparent);backdrop-filter:blur(6px)}
+body.has-bg section,body.has-bg .head,body.has-bg .stat{background:color-mix(in srgb,var(--card) var(--card-a,88%),transparent);backdrop-filter:blur(6px)}
 body.has-bg .tabs{background:color-mix(in srgb,var(--paper) var(--card-a,88%),transparent);backdrop-filter:blur(6px)}
 .head{border-radius:6px;margin-bottom:12px}
 body.has-bg .head{padding:12px 16px}
-.cc-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:180px;overflow:auto}
+.cc-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:180px;overflow-x:hidden;overflow-y:auto}
 .cc-grid label{flex-direction:row;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--line);border-radius:12px;cursor:pointer;color:var(--ink);font-size:13px}
 .cc-grid label.on{border-color:var(--down);color:var(--down)}
+/* 状态栏 */
+.statusbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:10px 14px;min-width:0}
+.stat .k{display:block;font-size:12.5px;color:var(--muted)}
+.stat b{display:block;font-size:24px;line-height:1.3;font-weight:650}
+.stat .s{display:block;font-size:12px;color:var(--muted);overflow-wrap:anywhere;line-height:1.5}
+.stat.bl b{color:var(--down)}
+/* 窄屏：表格改为卡片，不出现横向滚动 */
+@media (max-width:960px){
+  table,thead,tbody,tr,td{display:block;width:100%}
+  thead{display:none}
+  tr{border:1px solid var(--line);border-radius:6px;margin:0 0 10px;padding:4px 10px}
+  td{position:relative;padding:6px 0 6px 36%;border-bottom:1px dashed var(--line);white-space:normal;min-height:30px}
+  td:last-child{border-bottom:0}
+  td::before{content:attr(data-label);position:absolute;left:0;top:6px;width:33%;color:var(--muted);font-size:12.5px}
+  td[data-label=""],td[colspan]{padding-left:0}
+  td[data-label=""]::before,td[colspan]::before{content:none}
+  td.mono,.mono{white-space:normal}
+  .scroll{max-height:none}
+}
+@media (max-width:700px){.statusbar{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 </head>
 <body>
@@ -83,8 +106,15 @@ body.has-bg .head{padding:12px 16px}
         <button class="ghost" id="bg-reset">恢复默认</button>
         <span id="bg-msg" class="sub" style="margin:0"></span>
       </div>
-      <p class="sub" style="margin:8px 0 0;font-size:12.5px">背景只保存在当前浏览器里，换设备需重新设置。上传的图片会自动压缩到 1920px 以内。</p>
+      <p class="sub" style="margin:8px 0 0;font-size:12.5px">背景保存在 Cloudflare KV，所有设备打开面板后会自动同步（约 30 秒内）。上传的图片会自动压缩到 1920px 以内。</p>
     </details>
+  </div>
+
+  <div class="statusbar" id="statusbar">
+    <div class="stat"><span class="k">当前节点总数</span><b id="sb-nodes">-</b><span class="s" id="sb-nodes-sub">&nbsp;</span></div>
+    <div class="stat"><span class="k">当前可用住宅数</span><b id="sb-res">-</b><span class="s" id="sb-res-sub">&nbsp;</span></div>
+    <div class="stat"><span class="k">可用国家 / 地区</span><b id="sb-cc">-</b><span class="s" id="sb-cc-sub">&nbsp;</span></div>
+    <div class="stat bl"><span class="k">黑名单（不连接的国家）</span><b id="sb-bl">-</b><span class="s" id="sb-bl-sub">&nbsp;</span></div>
   </div>
 
   <div id="old-agent" class="warn" hidden></div>
@@ -104,7 +134,7 @@ body.has-bg .head{padding:12px 16px}
   <section>
     <h2>VPS 代理服务状态</h2>
     <div class="table-wrap">
-      <table style="min-width:760px">
+      <table>
         <thead><tr><th>节点</th><th>服务</th><th>端口</th><th>当前连接</th><th>累计 / 拒绝</th><th>上行</th><th>下行</th><th>已运行</th></tr></thead>
         <tbody id="proxy-body"></tbody>
       </table>
@@ -133,7 +163,7 @@ body.has-bg .head{padding:12px 16px}
       <span id="scan-msg" class="sub" style="margin:0"></span>
     </div>
     <div class="table-wrap scroll">
-      <table style="min-width:1040px">
+      <table>
         <thead><tr><th>操作</th><th>类型</th><th>IP:端口</th><th>国家 / 地区</th><th>使用人数</th><th>运行时间</th><th>协议</th><th>真实延迟</th><th>速度</th><th>评分</th><th>来源节点</th></tr></thead>
         <tbody id="scan-body"></tbody>
       </table>
@@ -171,7 +201,7 @@ body.has-bg .head{padding:12px 16px}
 
     <h2 style="margin-top:18px">路由预览 <span class="tag" id="route-tag"></span></h2>
     <div class="table-wrap">
-      <table style="min-width:640px">
+      <table>
         <thead><tr><th>#</th><th>IP:端口</th><th>国家 / 地区</th><th>真实延迟</th><th>速度</th><th>评分</th><th>来源节点</th></tr></thead>
         <tbody id="route-body"></tbody>
       </table>
@@ -260,7 +290,36 @@ const cname = (cc, fallback) => { try { return (cc && cnNames && cnNames.of(cc))
 const flag = (cc) => /^[A-Z]{2}$/.test(cc || "") ? String.fromCodePoint(...[...cc].map((c) => 0x1f1a5 + c.charCodeAt(0))) : "";
 const METHOD = { tcp: "TCP", icmp: "ICMP", vpngate: "自报", none: "" };
 
+function renderStatus() {
+  const st = window.__state; if (!st) return;
+  const online = st.nodes.filter((n) => n.online), up = online.filter((n) => n.status === "up");
+  $("sb-nodes").textContent = st.nodes.length;
+  $("sb-nodes-sub").textContent = "在线 " + online.length + " · 代理就绪 " + up.length;
+  const ex = [...new Set((st.policy && st.policy.exclude) || [])].sort();
+  $("sb-bl").textContent = ex.length;
+  $("sb-bl-sub").textContent = ex.length ? ex.map((c) => flag(c) + c).join(" ") : "无";
+  if (!scanData) { $("sb-res").textContent = "-"; $("sb-cc").textContent = "-"; return; }
+  const exs = new Set(ex);
+  const ok = scanData.items.filter((r) => r.residential && r.latency != null && !exs.has(r.cc));
+  const by = new Map(); for (const r of ok) by.set(r.cc, (by.get(r.cc) || 0) + 1);
+  $("sb-res").textContent = ok.length;
+  $("sb-res-sub").textContent = "已排除黑名单 · 住宅总数 " + scanData.residential + " / 扫描 " + scanData.total;
+  $("sb-cc").textContent = by.size;
+  const top = [...by.entries()].sort((a, b) => b[1] - a[1]);
+  $("sb-cc-sub").textContent = top.length ? top.slice(0, 8).map(([c, n]) => flag(c) + c + "·" + n).join(" ") + (top.length > 8 ? " …+" + (top.length - 8) : "") : "暂无";
+}
+
+// 给表格单元格补 data-label（窄屏卡片布局用）
+function labelize(tbody) {
+  const t = tbody.closest("table"), ths = [...t.querySelectorAll("thead th")].map((x) => x.textContent.trim());
+  for (const tr of tbody.rows) {
+    if (tr.cells.length === 1 && tr.cells[0].colSpan > 1) continue;
+    [...tr.cells].forEach((td, i) => { td.dataset.label = ths[i] || ""; });
+  }
+}
+
 function render(st) {
+  window.__state = st;
   $("ver").textContent = st.version ? "Hub v" + st.version : "";
   const old = st.nodes.filter((n) => n.online && !n.scan_state);
   const oa = $("old-agent");
@@ -318,7 +377,9 @@ function render(st) {
     body.appendChild(tr);
   }
 
+  labelize(body);
   renderProxy(st);
+  renderStatus();
   // 最新在前（接口已按时间倒序返回），带时间戳；服务端只保留 3 天
   $("logs").textContent = st.logs
     .map((l) => new Date(l.ts).toLocaleString("zh-CN", { hour12: false }) + " [" + nodeName(l.node_id) + "] " + l.line).join("\n");
@@ -348,6 +409,7 @@ function renderProxy(st) {
     cell(tr, p.since && p.listening ? fmtDur(st.now - p.since) : "-");
     body.appendChild(tr);
   }
+  labelize(body);
 }
 
 const SETS = { ex: new Set(), pf: new Set() };
@@ -395,6 +457,7 @@ async function loadRoute() {
     nameCell(tr, r.node_id);
     body.appendChild(tr);
   });
+  labelize(body);
 }
 
 // ---- 系统诊断
@@ -414,7 +477,7 @@ function renderDiag() {
     h.textContent = nd.node_id + " · 通过 " + cnt.ok + " · 警告 " + cnt.warn + " · 失败 " + cnt.fail + " · " + ago(Date.now() - nd.ts);
     box.appendChild(h);
     const wrap = document.createElement("div"); wrap.className = "table-wrap";
-    const t = document.createElement("table"); t.style.minWidth = "640px";
+    const t = document.createElement("table"); 
     const tb = document.createElement("tbody");
     // 失败排最前
     const order = { fail: 0, warn: 1, ok: 2 };
@@ -494,6 +557,7 @@ function scanFiltered() {
 }
 
 function renderScan() {
+  renderStatus();
   if (!scanData) return;
   $("st-res").textContent = scanData.reachable_residential + " / " + scanData.residential;
   $("st-total").textContent = scanData.total;
@@ -541,6 +605,7 @@ function renderScan() {
     nameCell(tr, r.node_id);
     body.appendChild(tr);
   }
+  labelize(body);
   if (rows.length > 300) $("scan-msg").textContent = "仅显示前 300 条，共 " + rows.length + " 条符合条件";
   else if ($("scan-msg").dataset.busy !== "1") $("scan-msg").textContent = "符合条件 " + rows.length + " 条";
 }
@@ -576,7 +641,7 @@ $("save").onclick = async () => {
     await api("/api/policy", {
       country: $("country").value.trim(), port: $("port").value.trim(), mode: $("mode").value,
       max_conns: $("maxc").value.trim(), proxy_enabled: $("proxy-on").value, auto_best: $("auto-best").value, exclude: [...SETS.ex], prefer: [...SETS.pf] });
-    setTimeout(loadRoute, 300);
+    setTimeout(loadRoute, 300); setTimeout(refresh, 400);
     $("save-msg").textContent = "已保存，节点会在下一次心跳（约 15 秒）内生效";
   } catch (e) { $("save-msg").textContent = e.message; }
 };
@@ -595,22 +660,43 @@ $("fmt-http").onclick = () => { scheme = "http"; loadList(); };
 $("copy-list").onclick = () => navigator.clipboard.writeText($("list").value);
 document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => navigator.clipboard.writeText($(b.dataset.copy).textContent));
 
-const BG = { img: "bg_img", op: "bg_op" };
+const BG = { img: "bg_img", op: "bg_op", ts: "bg_ts" };
 const lsGet = (k) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } };
 const lsSet = (k, v) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); return true; } catch { return false; } };
 const bgMsg = (t) => { $("bg-msg").textContent = t; };
+// 本机只是缓存，Cloudflare KV 才是唯一来源
+let bgImg = lsGet(BG.img), bgOp = parseInt(lsGet(BG.op), 10) || 88, bgTs = parseInt(lsGet(BG.ts), 10) || 0, bgTimer = null;
 function applyBg() {
-  const u = lsGet(BG.img), op = parseInt(lsGet(BG.op), 10) || 88;
-  document.body.style.backgroundImage = u ? 'url("' + u.replace(/"/g, "%22") + '")' : "";
-  document.body.classList.toggle("has-bg", !!u);
-  document.documentElement.style.setProperty("--card-a", op + "%");
-  $("bg-op").value = op;
+  document.body.style.backgroundImage = bgImg ? 'url("' + bgImg.replace(/"/g, "%22") + '")' : "";
+  document.body.classList.toggle("has-bg", !!bgImg);
+  document.documentElement.style.setProperty("--card-a", bgOp + "%");
+  $("bg-op").value = bgOp;
+}
+function bgSave() { lsSet(BG.img, bgImg); lsSet(BG.op, String(bgOp)); lsSet(BG.ts, String(bgTs)); }
+async function bgPush(payload, okText) {
+  try {
+    const j = await api("/api/bg", payload);
+    bgTs = j.ts || bgTs; bgSave();
+    bgMsg(okText || "已同步到所有设备");
+  } catch (e) { bgMsg("已应用到本机，但云端同步失败：" + e.message); }
+}
+async function bgPull() {
+  try {
+    const j = await api("/api/bg?since=" + bgTs);
+    if ((j.ts || 0) > bgTs) {
+      bgImg = j.img || ""; bgOp = j.op || 88; bgTs = j.ts; bgSave(); applyBg();
+    } else if (!j.ts && bgImg && bgImg.length < 6e6) {
+      await bgPush({ img: bgImg, op: bgOp }, "已把本机背景上传到云端，其它设备会自动同步");
+    }
+  } catch (e) {
+    if (!$("bg-msg").textContent) bgMsg("云端同步不可用（" + e.message + "），背景仅保存在本机");
+  }
 }
 $("bg-apply").onclick = () => {
   const u = $("bg-url").value.trim();
   if (!/^https:\/\/\S+$/i.test(u)) return bgMsg("请填入 https:// 开头的图片链接");
   const im = new Image();
-  im.onload = () => { if (lsSet(BG.img, u)) { applyBg(); bgMsg("已应用"); } else bgMsg("保存失败：浏览器禁用了本地存储"); };
+  im.onload = () => { bgImg = u; bgSave(); applyBg(); bgMsg("已应用，同步中…"); bgPush({ img: u }); };
   im.onerror = () => bgMsg("图片无法加载，请检查链接是否可直接访问");
   im.src = u;
 };
@@ -626,17 +712,26 @@ $("bg-file").onchange = (e) => {
       const cv = document.createElement("canvas");
       cv.width = Math.max(1, Math.round(im.width * k)); cv.height = Math.max(1, Math.round(im.height * k));
       cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height);
-      if (lsSet(BG.img, cv.toDataURL("image/jpeg", 0.82))) { applyBg(); bgMsg("已应用"); }
-      else bgMsg("图片太大，保存失败，请换一张或改用链接");
+      const data = cv.toDataURL("image/jpeg", 0.82);
+      bgImg = data; bgSave(); applyBg(); bgMsg("已应用，同步中…"); bgPush({ img: data });
     };
     im.onerror = () => bgMsg("无法读取这张图片");
     im.src = fr.result;
   };
   fr.readAsDataURL(f);
 };
-$("bg-op").oninput = () => { lsSet(BG.op, $("bg-op").value); applyBg(); };
-$("bg-reset").onclick = () => { lsSet(BG.img, ""); lsSet(BG.op, ""); $("bg-url").value = ""; applyBg(); bgMsg("已恢复默认"); };
+$("bg-op").oninput = () => {
+  bgOp = parseInt($("bg-op").value, 10) || 88; bgSave(); applyBg();
+  clearTimeout(bgTimer); bgTimer = setTimeout(() => bgPush({ op: bgOp }), 500);
+};
+$("bg-reset").onclick = () => {
+  bgImg = ""; bgOp = 88; bgSave(); applyBg(); $("bg-url").value = "";
+  bgPush({ img: "", op: 88 }, "已恢复默认（所有设备）");
+};
 applyBg();
+bgPull();
+setInterval(bgPull, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) bgPull(); });
 
 const TABS = ["nodes", "scan", "route", "diag", "install", "logs"];
 function showTab(t) {
