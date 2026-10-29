@@ -53,6 +53,11 @@ select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid va
 .stats b{color:var(--ink);font-size:18px;display:block;font-weight:650}
 .scroll{max-height:520px;overflow:auto}
 thead th{position:sticky;top:0;background:var(--card)}
+details.ex{margin-top:12px}
+details.ex summary{cursor:pointer;color:var(--ink)}
+.cc-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:180px;overflow:auto}
+.cc-grid label{flex-direction:row;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--line);border-radius:12px;cursor:pointer;color:var(--ink);font-size:13px}
+.cc-grid label.on{border-color:var(--down);color:var(--down)}
 </style>
 </head>
 <body>
@@ -95,7 +100,7 @@ thead th{position:sticky;top:0;background:var(--card)}
     </div>
     <div class="table-wrap scroll">
       <table style="min-width:1040px">
-        <thead><tr><th>类型</th><th>IP:端口</th><th>国家 / 地区</th><th>ISP</th><th>协议</th><th>真实延迟</th><th>速度</th><th>评分</th><th>来源节点</th><th>操作</th></tr></thead>
+        <thead><tr><th>操作</th><th>类型</th><th>IP:端口</th><th>国家 / 地区</th><th>使用人数</th><th>协议</th><th>真实延迟</th><th>速度</th><th>评分</th><th>来源节点</th></tr></thead>
         <tbody id="scan-body"></tbody>
       </table>
     </div>
@@ -110,14 +115,19 @@ thead th{position:sticky;top:0;background:var(--card)}
         <option value="country">指定国家（按评分）</option>
         <option value="latency">延迟优先</option>
         <option value="speed">速度优先</option></select></label>
-      <label>目标国家（两位代码，或 ANY）<input id="country" maxlength="3" autocomplete="off"></label>
+      <label id="country-wrap">目标国家（两位代码，或 ANY）<input id="country" maxlength="3" autocomplete="off"></label>
       <label>代理端口<input id="port" inputmode="numeric" autocomplete="off"></label>
       <label>最大连接数<input id="maxc" inputmode="numeric" autocomplete="off" style="width:100px"></label>
       <label>代理服务<select id="proxy-on"><option value="1">启用</option><option value="0">停用</option></select></label>
       <button id="save">保存策略</button>
       <span id="save-msg" class="sub" style="margin:0"></span>
     </div>
-    <p class="sub" style="margin:10px 0 0;font-size:12.5px">三种模式都只在「目标国家」内挑选（ANY = 全球），并优先使用已扫描确认的住宅 IP。<b>延迟优先</b>：实测延迟最低；<b>速度优先</b>：VPNGate 测速最高；<b>指定国家</b>：只限定国家，按 VPNGate 评分。停用代理服务后不再接受新连接，已建立的连接会自然结束。</p>
+    <details class="ex" id="ex-box">
+      <summary>不连接的国家（可多选）：<span id="ex-sum">无</span></summary>
+      <div class="cc-grid" id="ex-grid"></div>
+      <button class="ghost" id="ex-clear" style="margin-top:8px">清空</button>
+    </details>
+    <p class="sub" style="margin:10px 0 0;font-size:12.5px">只有<b>指定国家</b>模式需要设置目标国家（ANY = 全球），按 VPNGate 评分选择；<b>延迟优先</b>（实测延迟最低）和<b>速度优先</b>（VPNGate 测速最高）在全球范围内挑选，不限国家。三种模式都会跳过「不连接的国家」，并优先使用已扫描确认的住宅 IP。修改后点「保存策略」生效。停用代理服务后不再接受新连接，已建立的连接会自然结束。</p>
 
     <h2 style="margin-top:18px">路由预览 <span class="tag" id="route-tag"></span></h2>
     <div class="table-wrap">
@@ -217,7 +227,9 @@ function render(st) {
   if (!formReady) {
     $("country").value = st.policy.country; $("port").value = st.policy.port;
     $("mode").value = st.policy.mode || "country"; $("maxc").value = st.policy.max_conns || 500;
-    $("proxy-on").value = st.policy.proxy_enabled === false ? "0" : "1"; formReady = true;
+    $("proxy-on").value = st.policy.proxy_enabled === false ? "0" : "1";
+    exSet.clear(); (st.policy.exclude || []).forEach((c) => exSet.add(c));
+    syncMode(); renderEx(); formReady = true;
   }
 
   const body = $("nodes");
@@ -284,10 +296,32 @@ function renderProxy(st) {
   }
 }
 
+const exSet = new Set();
+const EX_COMMON = ["JP","KR","US","TH","VN","RU","TW","HK","ID","IN","BR","DE","FR","GB","CA","AU","SG","MY","PH","TR","UA","PL","IT","ES","NL","SE","CH","CN"];
+function renderEx() {
+  const names = new Map();
+  for (const c of EX_COMMON) names.set(c, "");
+  for (const c of (scanData && scanData.countries) || []) if (c.cc) names.set(c.cc, c.country || "");
+  for (const c of exSet) if (!names.has(c)) names.set(c, "");
+  const grid = $("ex-grid"); grid.replaceChildren();
+  [...names.keys()].sort().forEach((cc) => {
+    const lb = document.createElement("label"); lb.className = exSet.has(cc) ? "on" : "";
+    const cb = document.createElement("input"); cb.type = "checkbox"; cb.style.width = "auto"; cb.checked = exSet.has(cc);
+    cb.onchange = () => { cb.checked ? exSet.add(cc) : exSet.delete(cc); renderEx(); };
+    lb.append(cb, document.createTextNode(flag(cc) + " " + cname(cc, names.get(cc))));
+    grid.appendChild(lb);
+  });
+  $("ex-sum").textContent = exSet.size ? [...exSet].sort().map((c) => flag(c) + c).join(" ") : "无";
+}
+$("ex-clear").onclick = () => { exSet.clear(); renderEx(); };
+function syncMode() { $("country-wrap").hidden = $("mode").value !== "country"; }
+$("mode").onchange = syncMode;
+
 async function loadRoute() {
   const d = await api("/api/route/preview?limit=5");
   $("route-tag").textContent = "模式：" + ({ country: "指定国家", latency: "延迟优先", speed: "速度优先" }[d.mode] || d.mode) +
-    " · 国家：" + d.country + " · 候选 " + d.total;
+    " · 国家：" + (d.country === "ANY" ? "全球" : d.country) +
+    ((d.exclude || []).length ? " · 排除 " + d.exclude.join(",") : "") + " · 候选 " + d.total;
   const body = $("route-body"); body.replaceChildren();
   $("route-empty").hidden = d.items.length > 0;
   d.items.forEach((r, i) => {
@@ -418,19 +452,6 @@ function renderScan() {
   $("scan-empty").textContent = window.__scanHint || "暂无扫描结果。";
   for (const r of rows.slice(0, 300)) {
     const tr = document.createElement("tr");
-    const t = cell(tr, "");
-    const b = document.createElement("span");
-    b.className = "badge " + (r.hosting ? "host" : r.mobile ? "mob" : "res");
-    b.textContent = r.hosting ? "机房" : r.mobile ? "移动" : "住宅";
-    t.appendChild(b);
-    cell(tr, r.host + ":" + r.port, "mono");
-    cell(tr, flag(r.cc) + " " + cname(r.cc, r.country) + [r.region, r.city].filter(Boolean).map((x) => " · " + x).join(""));
-    cell(tr, r.isp || "-");
-    cell(tr, (r.proto || "").toUpperCase());
-    latCell(tr, r);
-    cell(tr, fmtSpeed(r.speed), "mono");
-    cell(tr, r.score ? String(r.score) : "-", "mono");
-    cell(tr, r.node_id);
     const node = (window.__nodes || []).find((n) => n.id === r.node_id);
     const ops = document.createElement("td");
     if (node && (node.pin_ip === r.ip || (node.status === "up" && node.exit_ip === r.ip))) {
@@ -443,6 +464,20 @@ function renderScan() {
       ops.appendChild(sw);
     }
     tr.appendChild(ops);
+    const t = cell(tr, "");
+    const b = document.createElement("span");
+    b.className = "badge " + (r.hosting ? "host" : r.mobile ? "mob" : "res");
+    b.textContent = r.hosting ? "机房" : r.mobile ? "移动" : "住宅";
+    t.appendChild(b);
+    cell(tr, r.host + ":" + r.port, "mono");
+    cell(tr, flag(r.cc) + " " + cname(r.cc, r.country) + [r.region, r.city].filter(Boolean).map((x) => " · " + x).join(""));
+    const ut = cell(tr, String(r.sessions || 0), "mono");
+    ut.title = "当前连接数 " + (r.sessions || 0) + "，累计用户 " + (r.users || 0);
+    cell(tr, (r.proto || "").toUpperCase());
+    latCell(tr, r);
+    cell(tr, fmtSpeed(r.speed), "mono");
+    cell(tr, r.score ? String(r.score) : "-", "mono");
+    cell(tr, r.node_id);
     body.appendChild(tr);
   }
   if (rows.length > 300) $("scan-msg").textContent = "仅显示前 300 条，共 " + rows.length + " 条符合条件";
@@ -461,7 +496,7 @@ async function switchTo(r, btn) {
   refresh();
 }
 
-async function loadScan() { scanData = await api("/api/scan?limit=2000"); renderScan(); }
+async function loadScan() { scanData = await api("/api/scan?limit=2000"); renderScan(); if (!$("ex-box").open) renderEx(); }
 
 async function loadList() {
   const r = await fetch("/api/proxies?scheme=" + scheme);
@@ -479,7 +514,7 @@ $("save").onclick = async () => {
   try {
     await api("/api/policy", {
       country: $("country").value.trim(), port: $("port").value.trim(), mode: $("mode").value,
-      max_conns: $("maxc").value.trim(), proxy_enabled: $("proxy-on").value });
+      max_conns: $("maxc").value.trim(), proxy_enabled: $("proxy-on").value, exclude: [...exSet] });
     setTimeout(loadRoute, 300);
     $("save-msg").textContent = "已保存，节点会在下一次心跳（约 15 秒）内生效";
   } catch (e) { $("save-msg").textContent = e.message; }

@@ -18,6 +18,10 @@ const json = (obj, status = 200) =>
 const text = (body, status = 200, type = "text/plain; charset=utf-8") =>
   new Response(body, { status, headers: { "content-type": type, "cache-control": "no-store" } });
 
+const parseCCs = (v) => {
+  const arr = Array.isArray(v) ? v : String(v ?? "").split(",");
+  return [...new Set(arr.map((x) => String(x).trim().toUpperCase()).filter((x) => /^[A-Z]{2}$/.test(x)))].slice(0, 100);
+};
 const clip = (v, n) => String(v ?? "").slice(0, n);
 const toInt = (v, d = 0) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : d);
 
@@ -84,7 +88,7 @@ async function doInit(db) {
     ["scan_nonce", "INTEGER DEFAULT 0"], ["scan_state", "TEXT"], ["scan_at", "INTEGER DEFAULT 0"],
     ["pin_ip", "TEXT"], ["diag_nonce", "INTEGER DEFAULT 0"], ["proxy_stats", "TEXT"],
   ]);
-  await addCols(db, "scan_ips", [["speed", "INTEGER DEFAULT 0"]]);
+  await addCols(db, "scan_ips", [["speed", "INTEGER DEFAULT 0"], ["sessions", "INTEGER DEFAULT 0"], ["users", "INTEGER DEFAULT 0"]]);
 }
 async function addCols(db, table, list) {
   const cols = ((await db.prepare(`PRAGMA table_info(${table})`).all()).results || []).map((c) => c.name);
@@ -93,7 +97,7 @@ async function addCols(db, table, list) {
 }
 async function getPolicy(db) {
   const rows = (await db.prepare("SELECT k, v FROM policy").all()).results || [];
-  const p = { country: "US", port: "7920", mode: "country", proxy_enabled: "1", max_conns: "500" };
+  const p = { country: "US", port: "7920", mode: "country", proxy_enabled: "1", max_conns: "500", exclude: "" };
   for (const r of rows) p[r.k] = r.v;
   return {
     country: p.country,
@@ -101,6 +105,7 @@ async function getPolicy(db) {
     mode: MODES.includes(p.mode) ? p.mode : "country",
     proxy_enabled: p.proxy_enabled !== "0",
     max_conns: Math.min(Math.max(toInt(p.max_conns, 500), 1), 5000),
+    exclude: parseCCs(p.exclude),
   };
 }
 
@@ -168,7 +173,8 @@ async function heartbeat(req, env) {
   const policy = await getPolicy(db);
   return json({
     policy: {
-      country: policy.country,
+      country: policy.mode === "country" ? policy.country : "ANY", // 延迟 / 速度优先不限定国家
+      exclude: policy.exclude,
       port: policy.port,
       mode: policy.mode,
       proxy_enabled: policy.proxy_enabled,
@@ -203,17 +209,17 @@ async function scanIngest(req, env) {
     if (!IPV4.test(ip)) continue;
     stmts.push(
       db.prepare(
-        `INSERT INTO scan_ips (node_id,ip,host,port,proto,cc,country,region,city,isp,org,hosting,proxy,mobile,residential,latency,method,score,scan_id,scanned_at,speed)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)
+        `INSERT INTO scan_ips (node_id,ip,host,port,proto,cc,country,region,city,isp,org,hosting,proxy,mobile,residential,latency,method,score,scan_id,scanned_at,speed,sessions,users)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)
          ON CONFLICT(node_id,ip) DO UPDATE SET host=excluded.host,port=excluded.port,proto=excluded.proto,cc=excluded.cc,
            country=excluded.country,region=excluded.region,city=excluded.city,isp=excluded.isp,org=excluded.org,
            hosting=excluded.hosting,proxy=excluded.proxy,mobile=excluded.mobile,residential=excluded.residential,
-           latency=excluded.latency,method=excluded.method,score=excluded.score,scan_id=excluded.scan_id,scanned_at=excluded.scanned_at,speed=excluded.speed`
+           latency=excluded.latency,method=excluded.method,score=excluded.score,scan_id=excluded.scan_id,scanned_at=excluded.scanned_at,speed=excluded.speed,sessions=excluded.sessions,users=excluded.users`
       ).bind(
         id, ip, clip(x.host, 80), toInt(x.port), clip(x.proto, 4), clip(x.cc, 4).toUpperCase(),
         clip(x.country, 60), clip(x.region, 60), clip(x.city, 60), clip(x.isp, 120), clip(x.org, 120),
         bool01(x.hosting), bool01(x.proxy), bool01(x.mobile), bool01(x.residential),
-        x.latency == null ? null : toInt(x.latency), clip(x.method, 10), toInt(x.score), scanId, now, toInt(x.speed)
+        x.latency == null ? null : toInt(x.latency), clip(x.method, 10), toInt(x.score), scanId, now, toInt(x.speed), toInt(x.sessions), toInt(x.users)
       )
     );
   }
@@ -272,9 +278,10 @@ async function routePreview(req, env) {
   const q = new URL(req.url).searchParams;
   const pol = await getPolicy(env.DB);
   const nodeId = clip(q.get("node_id"), 64);
+  const target = pol.mode === "country" ? pol.country : "ANY";
   const rows = ((await env.DB.prepare("SELECT * FROM scan_ips").all()).results || []).filter(
     (r) => r.residential && r.latency != null && (!nodeId || r.node_id === nodeId) &&
-      (pol.country === "ANY" || r.cc === pol.country)
+      (target === "ANY" || r.cc === target) && !pol.exclude.includes(r.cc)
   );
   const by = {
     speed: (a, b) => (b.speed || 0) - (a.speed || 0) || a.latency - b.latency,
@@ -283,7 +290,7 @@ async function routePreview(req, env) {
   }[pol.mode];
   rows.sort(by);
   const limit = Math.min(Math.max(toInt(q.get("limit"), 5), 1), 50);
-  return json({ mode: pol.mode, country: pol.country, total: rows.length, items: rows.slice(0, limit) });
+  return json({ mode: pol.mode, country: target, exclude: pol.exclude, total: rows.length, items: rows.slice(0, limit) });
 }
 
 async function diagIngest(req, env) {
@@ -391,12 +398,16 @@ async function setPolicy(req, env) {
   const b = await readJson(req);
   if (!b) return json({ error: "bad json" }, 400);
   const cur = await getPolicy(env.DB);
-  const country = String(b.country || cur.country).toUpperCase();
+  const mode0 = String(b.mode || cur.mode);
+  const c0 = String(b.country || "").toUpperCase();
+  const country = mode0 === "country" || /^([A-Z]{2}|ANY)$/.test(c0) ? (c0 || cur.country) : cur.country;
   const port = toInt(b.port, cur.port);
   const mode = String(b.mode || cur.mode);
   const enabled = b.proxy_enabled === undefined ? cur.proxy_enabled : !(b.proxy_enabled === false || b.proxy_enabled === "0" || b.proxy_enabled === 0);
   const maxc = toInt(b.max_conns, cur.max_conns);
-  if (!/^([A-Z]{2}|ANY)$/.test(country)) return json({ error: "country 需为两位国家代码，或 ANY" }, 400);
+  const exclude = b.exclude === undefined ? cur.exclude : parseCCs(b.exclude);
+  // 只有「指定国家」模式需要目标国家；其它模式不校验、沿用已保存的值
+  if (mode === "country" && !/^([A-Z]{2}|ANY)$/.test(country)) return json({ error: "country 需为两位国家代码，或 ANY" }, 400);
   if (port < 1024 || port > 65535) return json({ error: "port 需在 1024-65535" }, 400);
   if (!MODES.includes(mode)) return json({ error: "mode 需为 country / latency / speed" }, 400);
   if (maxc < 1 || maxc > 5000) return json({ error: "最大连接数需在 1-5000" }, 400);
@@ -404,6 +415,7 @@ async function setPolicy(req, env) {
   await env.DB.batch([
     up("country", country), up("port", String(port)), up("mode", mode),
     up("proxy_enabled", enabled ? "1" : "0"), up("max_conns", String(maxc)),
+    up("exclude", exclude.join(",")),
   ]);
   return json({ ok: true });
 }

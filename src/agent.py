@@ -20,7 +20,7 @@ SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "900"))  # 自动扫描间�
 
 S = dict(country="US", port=7920, user="", pw="", nonce=None, ready=False, status="starting",
          exit_ip="", cc="", isp="", hosting=False, latency=0, pin="", pin_fail="",
-         mode="country", proxy_on=True, max_conns=500, skew=0, hub_rtt=0)
+         mode="country", proxy_on=True, max_conns=500, skew=0, hub_rtt=0, exclude=set())
 ROUTE_NAMES = dict(country="指定国家(评分)", latency="延迟优先", speed="速度优先")
 # 代理服务统计
 PROXY = dict(active=0, total=0, rejected=0, up=0, down=0, since=0, listening=False)
@@ -60,6 +60,13 @@ def apply_policy(r):
     if S["ready"] and country != S["country"]:
         log(f"目标国家变更 {S['country']} -> {country}")
         rotate_ev.set()
+    exclude = {str(x).upper() for x in (p.get("exclude") or []) if len(str(x)) == 2 and str(x).isalpha()}
+    if exclude != S["exclude"]:
+        if S["ready"]:
+            log("不连接的国家变更: " + (",".join(sorted(exclude)) or "无"))
+            if S["status"] == "up" and not S["pin"] and S["cc"] in exclude:
+                rotate_ev.set()
+        S["exclude"] = exclude
     pin = r.get("pin_ip") or ""
     if pin != S["pin"] and pin != S["pin_fail"]:
         S["pin"] = pin
@@ -232,6 +239,8 @@ def fetch_vpngate():
             out.append(dict(ip=row["IP"], cc=row["CountryShort"].upper(), score=int(row["Score"]),
                             speed=int(row["Speed"]) if str(row.get("Speed", "")).isdigit() else 0,
                             ping=int(row["Ping"]) if row["Ping"].isdigit() else 9999,
+                            sessions=int(row["NumVpnSessions"]) if str(row.get("NumVpnSessions", "")).isdigit() else 0,
+                            users=int(row["TotalUsers"]) if str(row.get("TotalUsers", "")).isdigit() else 0,
                             text=text, proto=proto, host=remote[1], port=int(remote[2])))
         except Exception:
             continue
@@ -336,7 +345,8 @@ async def scan_once():
                         isp=r.get("isp", ""), org=r.get("org", ""), hosting=hosting,
                         proxy=bool(r.get("proxy")), mobile=mobile,
                         residential=not hosting and not mobile,
-                        latency=ms, method=method, score=c["score"], speed=c["speed"])
+                        latency=ms, method=method, score=c["score"], speed=c["speed"],
+                        sessions=c.get("sessions", 0), users=c.get("users", 0))
 
         items = [x for x in await asyncio.gather(*(one(ip) for ip in ips if ip in info))]
         SCAN["res"] = {x["ip"]: (x["latency"] if x["latency"] is not None else 9999)
@@ -443,6 +453,9 @@ async def verify(c):
     if S["pin"]:
         if info.get("hosting"):
             log(f"提示：固定的出口 {info['query']} 被判定为机房 IP")
+    elif info.get("countryCode") in S["exclude"]:
+        log(f"出口国家 {info['countryCode']} 在排除列表中，跳过")
+        return False
     elif S["country"] != "ANY" and info["countryCode"] != S["country"]:
         log(f"出口国家 {info['countryCode']} 与目标 {S['country']} 不符")
         return False
@@ -505,14 +518,16 @@ async def tunnel_loop():
             continue
         pin = S["pin"]
         if not pin:
-            log(f"路由模式: {ROUTE_NAMES[S['mode']]}，目标 {want}")
+            log(f"路由模式: {ROUTE_NAMES[S['mode']]}，目标 {'全球' if want == 'ANY' else want}"
+                + (f"，排除 {','.join(sorted(S['exclude']))}" if S["exclude"] else ""))
         if pin:
             cands = [c for c in cache if c["ip"] == pin]
             if not cands and time.time() - cache_t > 60:
                 cache_t = 0  # 列表可能过期，刷新一次再判断
                 continue
         else:
-            cands = [c for c in cache if (want == "ANY" or c["cc"] == want) and c["ip"] not in black]
+            cands = [c for c in cache if (want == "ANY" or c["cc"] == want) and c["ip"] not in black
+                     and c["cc"] not in S["exclude"]]
         if not pin and not ALLOW_HOSTING:
             cands = [c for c in cands if c["ip"] not in SCAN["bad"]]  # 扫描已确认是机房 IP，不浪费建链时间
         cands.sort(key=route_key)
