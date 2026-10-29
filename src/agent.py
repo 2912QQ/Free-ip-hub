@@ -20,7 +20,7 @@ SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "900"))  # 自动扫描间�
 
 S = dict(country="US", port=7920, user="", pw="", nonce=None, ready=False, status="starting",
          exit_ip="", cc="", isp="", hosting=False, latency=0, pin="", pin_fail="",
-         mode="country", proxy_on=True, max_conns=500, skew=0, hub_rtt=0, exclude=set())
+         mode="country", proxy_on=True, max_conns=500, skew=0, hub_rtt=0, exclude=set(), prefer=set())
 ROUTE_NAMES = dict(country="指定国家(评分)", latency="延迟优先", speed="速度优先")
 # 代理服务统计
 PROXY = dict(active=0, total=0, rejected=0, up=0, down=0, since=0, listening=False)
@@ -67,6 +67,13 @@ def apply_policy(r):
             if S["status"] == "up" and not S["pin"] and S["cc"] in exclude:
                 rotate_ev.set()
         S["exclude"] = exclude
+    prefer = {str(x).upper() for x in (p.get("prefer") or []) if len(str(x)) == 2 and str(x).isalpha()}
+    if prefer != S["prefer"]:
+        if S["ready"]:
+            log("优先国家变更: " + (",".join(sorted(prefer)) or "无"))
+            if prefer and S["status"] == "up" and not S["pin"] and S["cc"] not in prefer:
+                rotate_ev.set()
+        S["prefer"] = prefer
     pin = r.get("pin_ip") or ""
     if pin != S["pin"] and pin != S["pin_fail"]:
         S["pin"] = pin
@@ -496,10 +503,10 @@ def route_key(c):
     known = lat is not None
     lat_v = lat if known else 99999 + c["ping"]
     if S["mode"] == "speed":
-        return (not known, -c["speed"], lat_v, -c["score"])
+        return (c["cc"] not in S["prefer"], not known, -c["speed"], lat_v, -c["score"])
     if S["mode"] == "latency":
-        return (not known, lat_v, -c["speed"], -c["score"])
-    return (not known, -c["score"], lat_v, c["ping"])
+        return (c["cc"] not in S["prefer"], not known, lat_v, -c["speed"], -c["score"])
+    return (c["cc"] not in S["prefer"], not known, -c["score"], lat_v, c["ping"])
 
 
 async def tunnel_loop():
@@ -519,6 +526,7 @@ async def tunnel_loop():
         pin = S["pin"]
         if not pin:
             log(f"路由模式: {ROUTE_NAMES[S['mode']]}，目标 {'全球' if want == 'ANY' else want}"
+                + (f"，优先 {','.join(sorted(S['prefer']))}" if S["prefer"] else "")
                 + (f"，排除 {','.join(sorted(S['exclude']))}" if S["exclude"] else ""))
         if pin:
             cands = [c for c in cache if c["ip"] == pin]

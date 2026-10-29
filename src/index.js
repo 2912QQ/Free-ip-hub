@@ -1,5 +1,6 @@
 import AGENT_PY from "./agent.py";
 import INSTALL_SH from "./install.sh";
+import UNINSTALL_SH from "./uninstall.sh";
 import PANEL_HTML from "./panel.html";
 
 const ONLINE_MS = 60_000;
@@ -86,7 +87,7 @@ async function doInit(db) {
   // 老版本数据库补列（失败不影响主流程）
   await addCols(db, "nodes", [
     ["scan_nonce", "INTEGER DEFAULT 0"], ["scan_state", "TEXT"], ["scan_at", "INTEGER DEFAULT 0"],
-    ["pin_ip", "TEXT"], ["diag_nonce", "INTEGER DEFAULT 0"], ["proxy_stats", "TEXT"],
+    ["pin_ip", "TEXT"], ["diag_nonce", "INTEGER DEFAULT 0"], ["proxy_stats", "TEXT"], ["alias", "TEXT"],
   ]);
   await addCols(db, "scan_ips", [["speed", "INTEGER DEFAULT 0"], ["sessions", "INTEGER DEFAULT 0"], ["users", "INTEGER DEFAULT 0"]]);
 }
@@ -97,7 +98,7 @@ async function addCols(db, table, list) {
 }
 async function getPolicy(db) {
   const rows = (await db.prepare("SELECT k, v FROM policy").all()).results || [];
-  const p = { country: "US", port: "7920", mode: "country", proxy_enabled: "1", max_conns: "500", exclude: "" };
+  const p = { country: "US", port: "7920", mode: "country", proxy_enabled: "1", max_conns: "500", exclude: "", prefer: "" };
   for (const r of rows) p[r.k] = r.v;
   return {
     country: p.country,
@@ -106,6 +107,7 @@ async function getPolicy(db) {
     proxy_enabled: p.proxy_enabled !== "0",
     max_conns: Math.min(Math.max(toInt(p.max_conns, 500), 1), 5000),
     exclude: parseCCs(p.exclude),
+    prefer: parseCCs(p.prefer).filter((c) => !parseCCs(p.exclude).includes(c)),
   };
 }
 
@@ -175,6 +177,7 @@ async function heartbeat(req, env) {
     policy: {
       country: policy.mode === "country" ? policy.country : "ANY", // 延迟 / 速度优先不限定国家
       exclude: policy.exclude,
+      prefer: policy.prefer,
       port: policy.port,
       mode: policy.mode,
       proxy_enabled: policy.proxy_enabled,
@@ -283,14 +286,16 @@ async function routePreview(req, env) {
     (r) => r.residential && r.latency != null && (!nodeId || r.node_id === nodeId) &&
       (target === "ANY" || r.cc === target) && !pol.exclude.includes(r.cc)
   );
-  const by = {
+  const pf = (r) => (pol.prefer.includes(r.cc) ? 0 : 1); // 优先国家永远排最前
+  const by0 = {
     speed: (a, b) => (b.speed || 0) - (a.speed || 0) || a.latency - b.latency,
     latency: (a, b) => a.latency - b.latency || (b.speed || 0) - (a.speed || 0),
     country: (a, b) => b.score - a.score || a.latency - b.latency,
   }[pol.mode];
+  const by = (a, b) => pf(a) - pf(b) || by0(a, b);
   rows.sort(by);
   const limit = Math.min(Math.max(toInt(q.get("limit"), 5), 1), 50);
-  return json({ mode: pol.mode, country: target, exclude: pol.exclude, total: rows.length, items: rows.slice(0, limit) });
+  return json({ mode: pol.mode, country: target, exclude: pol.exclude, prefer: pol.prefer, total: rows.length, items: rows.slice(0, limit) });
 }
 
 async function diagIngest(req, env) {
@@ -386,6 +391,7 @@ async function state(req, env) {
     logs,
     policy: await getPolicy(db),
     install_cmd: `curl -fsSL -H "Authorization: Bearer ${env.AGENT_TOKEN}" ${origin}/install.sh | sudo bash`,
+    uninstall_cmd: `curl -fsSL -H "Authorization: Bearer ${env.AGENT_TOKEN}" ${origin}/uninstall.sh | sudo bash`,
     proxy_auth_set: Boolean(env.PROXY_USER && env.PROXY_PASS),
   });
 }
@@ -406,6 +412,7 @@ async function setPolicy(req, env) {
   const enabled = b.proxy_enabled === undefined ? cur.proxy_enabled : !(b.proxy_enabled === false || b.proxy_enabled === "0" || b.proxy_enabled === 0);
   const maxc = toInt(b.max_conns, cur.max_conns);
   const exclude = b.exclude === undefined ? cur.exclude : parseCCs(b.exclude);
+  const prefer = (b.prefer === undefined ? cur.prefer : parseCCs(b.prefer)).filter((c) => !exclude.includes(c));
   // 只有「指定国家」模式需要目标国家；其它模式不校验、沿用已保存的值
   if (mode === "country" && !/^([A-Z]{2}|ANY)$/.test(country)) return json({ error: "country 需为两位国家代码，或 ANY" }, 400);
   if (port < 1024 || port > 65535) return json({ error: "port 需在 1024-65535" }, 400);
@@ -415,7 +422,7 @@ async function setPolicy(req, env) {
   await env.DB.batch([
     up("country", country), up("port", String(port)), up("mode", mode),
     up("proxy_enabled", enabled ? "1" : "0"), up("max_conns", String(maxc)),
-    up("exclude", exclude.join(",")),
+    up("exclude", exclude.join(",")), up("prefer", prefer.join(",")),
   ]);
   return json({ ok: true });
 }
@@ -424,6 +431,15 @@ async function rotate(req, env) {
   const { node_id } = (await readJson(req)) || {};
   await env.DB.prepare("UPDATE nodes SET rotate_nonce = rotate_nonce + 1 WHERE id=?1").bind(clip(node_id, 64)).run();
   return json({ ok: true });
+}
+
+async function renameNode(req, env) {
+  const b = (await readJson(req)) || {};
+  const id = clip(b.node_id, 64), alias = clip(b.alias, 40).trim();
+  const hit = await env.DB.prepare("SELECT 1 AS x FROM nodes WHERE id=?1").bind(id).first();
+  if (!hit) return json({ error: "节点不存在" }, 404);
+  await env.DB.prepare("UPDATE nodes SET alias=?2 WHERE id=?1").bind(id, alias || null).run();
+  return json({ ok: true, alias });
 }
 
 async function removeNode(req, env) {
@@ -470,9 +486,10 @@ export default {
       if (path === "/api/agent/diag") return diagIngest(req, env);
       return heartbeat(req, env);
     }
-    if (path === "/agent.py" || path === "/install.sh") {
+    if (path === "/agent.py" || path === "/install.sh" || path === "/uninstall.sh") {
       if (!(await agentAuth(req, env))) return text("unauthorized", 401);
       if (path === "/agent.py") return text(AGENT_PY);
+      if (path === "/uninstall.sh") return text(UNINSTALL_SH);
       return text(INSTALL_SH.replaceAll("__HUB__", url.origin).replaceAll("__TOKEN__", env.AGENT_TOKEN));
     }
 
@@ -513,6 +530,7 @@ export default {
       if (path === "/api/policy" && req.method === "POST") return await setPolicy(req, env);
       if (path === "/api/rotate" && req.method === "POST") return await rotate(req, env);
       if (path === "/api/nodes/delete" && req.method === "POST") return await removeNode(req, env);
+      if (path === "/api/nodes/rename" && req.method === "POST") return await renameNode(req, env);
     } catch (e) {
       return json({ error: String(e?.message || e) }, 500);
     }
