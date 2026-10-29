@@ -3,7 +3,6 @@ import INSTALL_SH from "./install.sh";
 import PANEL_HTML from "./panel.html";
 
 const ONLINE_MS = 60_000;
-const VERSION = "1.1.0";
 const enc = new TextEncoder();
 
 // ---------- helpers ----------
@@ -240,7 +239,6 @@ async function state(req, env) {
   const origin = new URL(req.url).origin;
   return json({
     now,
-    version: VERSION,
     nodes,
     logs,
     policy: await getPolicy(db),
