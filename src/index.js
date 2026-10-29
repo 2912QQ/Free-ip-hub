@@ -89,7 +89,7 @@ async function doInit(db) {
     ["scan_nonce", "INTEGER DEFAULT 0"], ["scan_state", "TEXT"], ["scan_at", "INTEGER DEFAULT 0"],
     ["pin_ip", "TEXT"], ["diag_nonce", "INTEGER DEFAULT 0"], ["proxy_stats", "TEXT"], ["alias", "TEXT"],
   ]);
-  await addCols(db, "scan_ips", [["speed", "INTEGER DEFAULT 0"], ["sessions", "INTEGER DEFAULT 0"], ["users", "INTEGER DEFAULT 0"]]);
+  await addCols(db, "scan_ips", [["speed", "INTEGER DEFAULT 0"], ["sessions", "INTEGER DEFAULT 0"], ["users", "INTEGER DEFAULT 0"], ["uptime", "INTEGER DEFAULT 0"]]);
 }
 async function addCols(db, table, list) {
   const cols = ((await db.prepare(`PRAGMA table_info(${table})`).all()).results || []).map((c) => c.name);
@@ -98,7 +98,7 @@ async function addCols(db, table, list) {
 }
 async function getPolicy(db) {
   const rows = (await db.prepare("SELECT k, v FROM policy").all()).results || [];
-  const p = { country: "US", port: "7920", mode: "country", proxy_enabled: "1", max_conns: "500", exclude: "", prefer: "" };
+  const p = { country: "US", port: "7920", mode: "country", proxy_enabled: "1", max_conns: "500", exclude: "", prefer: "", auto_best: "1" };
   for (const r of rows) p[r.k] = r.v;
   return {
     country: p.country,
@@ -106,6 +106,7 @@ async function getPolicy(db) {
     mode: MODES.includes(p.mode) ? p.mode : "country",
     proxy_enabled: p.proxy_enabled !== "0",
     max_conns: Math.min(Math.max(toInt(p.max_conns, 500), 1), 5000),
+    auto_best: p.auto_best !== "0",
     exclude: parseCCs(p.exclude),
     prefer: parseCCs(p.prefer).filter((c) => !parseCCs(p.exclude).includes(c)),
   };
@@ -178,6 +179,7 @@ async function heartbeat(req, env) {
       country: policy.mode === "country" ? policy.country : "ANY", // 延迟 / 速度优先不限定国家
       exclude: policy.exclude,
       prefer: policy.prefer,
+      auto_best: policy.auto_best,
       port: policy.port,
       mode: policy.mode,
       proxy_enabled: policy.proxy_enabled,
@@ -212,17 +214,17 @@ async function scanIngest(req, env) {
     if (!IPV4.test(ip)) continue;
     stmts.push(
       db.prepare(
-        `INSERT INTO scan_ips (node_id,ip,host,port,proto,cc,country,region,city,isp,org,hosting,proxy,mobile,residential,latency,method,score,scan_id,scanned_at,speed,sessions,users)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23)
+        `INSERT INTO scan_ips (node_id,ip,host,port,proto,cc,country,region,city,isp,org,hosting,proxy,mobile,residential,latency,method,score,scan_id,scanned_at,speed,sessions,users,uptime)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21,?22,?23,?24)
          ON CONFLICT(node_id,ip) DO UPDATE SET host=excluded.host,port=excluded.port,proto=excluded.proto,cc=excluded.cc,
            country=excluded.country,region=excluded.region,city=excluded.city,isp=excluded.isp,org=excluded.org,
            hosting=excluded.hosting,proxy=excluded.proxy,mobile=excluded.mobile,residential=excluded.residential,
-           latency=excluded.latency,method=excluded.method,score=excluded.score,scan_id=excluded.scan_id,scanned_at=excluded.scanned_at,speed=excluded.speed,sessions=excluded.sessions,users=excluded.users`
+           latency=excluded.latency,method=excluded.method,score=excluded.score,scan_id=excluded.scan_id,scanned_at=excluded.scanned_at,speed=excluded.speed,sessions=excluded.sessions,users=excluded.users,uptime=excluded.uptime`
       ).bind(
         id, ip, clip(x.host, 80), toInt(x.port), clip(x.proto, 4), clip(x.cc, 4).toUpperCase(),
         clip(x.country, 60), clip(x.region, 60), clip(x.city, 60), clip(x.isp, 120), clip(x.org, 120),
         bool01(x.hosting), bool01(x.proxy), bool01(x.mobile), bool01(x.residential),
-        x.latency == null ? null : toInt(x.latency), clip(x.method, 10), toInt(x.score), scanId, now, toInt(x.speed), toInt(x.sessions), toInt(x.users)
+        x.latency == null ? null : toInt(x.latency), clip(x.method, 10), toInt(x.score), scanId, now, toInt(x.speed), toInt(x.sessions), toInt(x.users), toInt(x.uptime)
       )
     );
   }
@@ -411,6 +413,7 @@ async function setPolicy(req, env) {
   const mode = String(b.mode || cur.mode);
   const enabled = b.proxy_enabled === undefined ? cur.proxy_enabled : !(b.proxy_enabled === false || b.proxy_enabled === "0" || b.proxy_enabled === 0);
   const maxc = toInt(b.max_conns, cur.max_conns);
+  const autoBest = b.auto_best === undefined ? cur.auto_best : !(b.auto_best === false || b.auto_best === "0" || b.auto_best === 0);
   const exclude = b.exclude === undefined ? cur.exclude : parseCCs(b.exclude);
   const prefer = (b.prefer === undefined ? cur.prefer : parseCCs(b.prefer)).filter((c) => !exclude.includes(c));
   // 只有「指定国家」模式需要目标国家；其它模式不校验、沿用已保存的值
@@ -422,7 +425,7 @@ async function setPolicy(req, env) {
   await env.DB.batch([
     up("country", country), up("port", String(port)), up("mode", mode),
     up("proxy_enabled", enabled ? "1" : "0"), up("max_conns", String(maxc)),
-    up("exclude", exclude.join(",")), up("prefer", prefer.join(",")),
+    up("exclude", exclude.join(",")), up("prefer", prefer.join(",")), up("auto_best", autoBest ? "1" : "0"),
   ]);
   return json({ ok: true });
 }

@@ -16,11 +16,12 @@ ALLOW_HOSTING = os.environ.get("ALLOW_HOSTING", "0") == "1"  # 1 = 不过滤机�
 DEV, TABLE = "tun_rp", "100"
 VPNGATE_API = "http://www.vpngate.net/api/iphone/"
 SO_BINDTODEVICE = getattr(socket, "SO_BINDTODEVICE", 25)
-SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "900"))  # 自动扫描间隔（秒）
+SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "960"))  # 自动抓取 + 择优间隔（秒），默认 16 分钟
 
 S = dict(country="US", port=7920, user="", pw="", nonce=None, ready=False, status="starting",
          exit_ip="", cc="", isp="", hosting=False, latency=0, pin="", pin_fail="",
-         mode="country", proxy_on=True, max_conns=500, skew=0, hub_rtt=0, exclude=set(), prefer=set())
+         mode="country", proxy_on=True, max_conns=500, skew=0, hub_rtt=0, exclude=set(), prefer=set(),
+         auto_best=True, cur=None, last_ip="", want_ip="")
 ROUTE_NAMES = dict(country="指定国家(评分)", latency="延迟优先", speed="速度优先")
 # 代理服务统计
 PROXY = dict(active=0, total=0, rejected=0, up=0, down=0, since=0, listening=False)
@@ -74,6 +75,7 @@ def apply_policy(r):
             if prefer and S["status"] == "up" and not S["pin"] and S["cc"] not in prefer:
                 rotate_ev.set()
         S["prefer"] = prefer
+    S["auto_best"] = bool(p.get("auto_best", True))
     pin = r.get("pin_ip") or ""
     if pin != S["pin"] and pin != S["pin_fail"]:
         S["pin"] = pin
@@ -246,6 +248,7 @@ def fetch_vpngate():
             out.append(dict(ip=row["IP"], cc=row["CountryShort"].upper(), score=int(row["Score"]),
                             speed=int(row["Speed"]) if str(row.get("Speed", "")).isdigit() else 0,
                             ping=int(row["Ping"]) if row["Ping"].isdigit() else 9999,
+                            uptime=int(row["Uptime"]) if str(row.get("Uptime", "")).isdigit() else 0,
                             sessions=int(row["NumVpnSessions"]) if str(row.get("NumVpnSessions", "")).isdigit() else 0,
                             users=int(row["TotalUsers"]) if str(row.get("TotalUsers", "")).isdigit() else 0,
                             text=text, proto=proto, host=remote[1], port=int(remote[2])))
@@ -317,7 +320,7 @@ async def measure(c):
     return None, "none"
 
 
-async def scan_once():
+async def scan_once(auto=False):
     loop = asyncio.get_running_loop()
     SCAN["state"] = "scanning"
     t0 = time.time()
@@ -353,7 +356,7 @@ async def scan_once():
                         proxy=bool(r.get("proxy")), mobile=mobile,
                         residential=not hosting and not mobile,
                         latency=ms, method=method, score=c["score"], speed=c["speed"],
-                        sessions=c.get("sessions", 0), users=c.get("users", 0))
+                        sessions=c.get("sessions", 0), users=c.get("users", 0), uptime=c.get("uptime", 0))
 
         items = [x for x in await asyncio.gather(*(one(ip) for ip in ips if ip in info))]
         SCAN["res"] = {x["ip"]: (x["latency"] if x["latency"] is not None else 9999)
@@ -366,24 +369,48 @@ async def scan_once():
             await loop.run_in_executor(None, hub_post, "/api/agent/scan", dict(
                 node_id=NODE_ID, scan_id=scan_id, items=chunk, last=n == len(chunks) - 1))
         SCAN["ts"] = int(time.time() * 1000)
+        if auto:
+            consider_best(list(uniq.values()))
         ok = sum(1 for x in items if x["residential"] and x["latency"] is not None)
         log(f"扫描完成：{len(items)} 条，可达住宅 IP {ok} 条，用时 {int(time.time() - t0)}s")
     finally:
         SCAN["state"] = "idle"
 
 
+def consider_best(cands):
+    """定时择优：扫描完成后，若当前隧道不是最优，就切到最优 IP（固定 IP / 关闭自动择优 / 隧道未就绪时不动）。"""
+    if not S["auto_best"] or S["pin"] or S["status"] != "up" or not S["cur"]:
+        return
+    want = S["country"]
+    pool = [c for c in cands
+            if (want == "ANY" or c["cc"] == want) and c["cc"] not in S["exclude"]
+            and c["ip"] not in SCAN["bad"] and SCAN["res"].get(c["ip"], 9999) < 9999]
+    if not pool:
+        return
+    best, cur = min(pool, key=route_key), S["cur"]
+    if best["ip"] != cur["ip"] and route_key(best) < route_key(cur):
+        S["want_ip"] = best["ip"]
+        log(f"定时择优：{best['ip']} ({best['cc']}) 优于当前 {cur['ip']} ({cur['cc']})，切换")
+        rotate_ev.set()
+    else:
+        log(f"定时择优：当前 {cur['ip']} 仍是最优，不切换")
+
+
 async def scan_loop():
     await asyncio.sleep(5)
+    auto = False
     while True:
         scan_ev.clear()
+        t0 = time.time()
         try:
-            await scan_once()
+            await scan_once(auto)
         except Exception as e:
             log(f"扫描失败: {e}")
-        try:
-            await asyncio.wait_for(scan_ev.wait(), SCAN_INTERVAL)
+        try:  # 以「开始时间」起算，保证约每 SCAN_INTERVAL 秒一轮
+            await asyncio.wait_for(scan_ev.wait(), max(30, SCAN_INTERVAL - (time.time() - t0)))
+            auto = False  # 面板手动触发：只刷新数据，不自动换线
         except asyncio.TimeoutError:
-            pass
+            auto = True
 
 
 async def sh(*cmd):
@@ -524,6 +551,9 @@ async def tunnel_loop():
             await asyncio.sleep(30)
             continue
         pin = S["pin"]
+        if S["want_ip"]:  # 定时择优：最优 IP 与上一条线路都放回候选
+            black.discard(S["want_ip"])
+            black.discard(S["last_ip"])
         if not pin:
             log(f"路由模式: {ROUTE_NAMES[S['mode']]}，目标 {'全球' if want == 'ANY' else want}"
                 + (f"，优先 {','.join(sorted(S['prefer']))}" if S["prefer"] else "")
@@ -539,6 +569,11 @@ async def tunnel_loop():
         if not pin and not ALLOW_HOSTING:
             cands = [c for c in cands if c["ip"] not in SCAN["bad"]]  # 扫描已确认是机房 IP，不浪费建链时间
         cands.sort(key=route_key)
+        if S["want_ip"] and not pin:
+            first = [c for c in cands if c["ip"] == S["want_ip"]]
+            if first:
+                cands = first + [c for c in cands if c["ip"] != S["want_ip"]]
+        S["want_ip"] = ""
         if pin and not cands:
             log(f"固定的 {pin} 已不在 VPNGate 列表，恢复自动选择")
             S["pin_fail"], S["pin"] = pin, ""
@@ -565,6 +600,7 @@ async def tunnel_loop():
                 proc, ok = await start_vpn(c)
                 if ok and await verify(c):
                     S["status"] = "up"
+                    S["cur"], S["last_ip"] = c, c["ip"]
                     connected = True
                     log(f"隧道就绪: 出口 {S['exit_ip']} {S['cc']} {S['isp']} {S['latency']}ms")
                     reason = await monitor(proc)
@@ -572,6 +608,7 @@ async def tunnel_loop():
                     rotate_ev.clear()
             finally:
                 await stop_vpn(proc)
+                S["cur"] = None
             black.add(c["ip"])
             S["status"] = "connecting"
             if pin and S["pin"] == pin and not connected:

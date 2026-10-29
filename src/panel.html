@@ -55,6 +55,9 @@ select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid va
 thead th{position:sticky;top:0;background:var(--card)}
 details.ex{margin-top:12px}
 details.ex summary{cursor:pointer;color:var(--ink)}
+.tabs{position:sticky;top:0;z-index:5;display:flex;gap:6px;flex-wrap:wrap;background:var(--paper);padding:8px 0;margin:0 0 12px;border-bottom:1px solid var(--line)}
+.tabs button{padding:6px 14px;font-size:14px;color:var(--ink)}
+.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 .cc-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:180px;overflow:auto}
 .cc-grid label{flex-direction:row;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--line);border-radius:12px;cursor:pointer;color:var(--ink);font-size:13px}
 .cc-grid label.on{border-color:var(--down);color:var(--down)}
@@ -68,7 +71,9 @@ details.ex summary{cursor:pointer;color:var(--ink)}
   <div id="old-agent" class="warn" hidden></div>
   <div id="warn" class="warn" hidden>代理账号密码尚未配置（PROXY_USER / PROXY_PASS）。未配置时 agent 会拒绝所有代理连接。</div>
 
-  <section>
+  <nav class="tabs" id="tabs"><button class="ghost" data-t="nodes">节点与代理列表</button><button class="ghost" data-t="scan">住宅 IP 扫描</button><button class="ghost" data-t="route">路由与代理服务</button><button class="ghost" data-t="diag">系统诊断</button><button class="ghost" data-t="install">接入 / 卸载</button><button class="ghost" data-t="logs">日志</button></nav>
+
+  <section data-tab="nodes">
     <h2>节点</h2>
     <div class="table-wrap">
       <table>
@@ -79,7 +84,7 @@ details.ex summary{cursor:pointer;color:var(--ink)}
     <div id="nodes-empty" class="empty" hidden>还没有节点接入。复制下面的安装命令，在一台海外 Linux VPS 上以 root 执行。</div>
   </section>
 
-  <section>
+  <section data-tab="scan">
     <h2>住宅 IP 扫描</h2>
     <div class="stats">
       <div><b id="st-res">-</b>住宅 IP（可达）</div>
@@ -100,7 +105,7 @@ details.ex summary{cursor:pointer;color:var(--ink)}
     </div>
     <div class="table-wrap scroll">
       <table style="min-width:1040px">
-        <thead><tr><th>操作</th><th>类型</th><th>IP:端口</th><th>国家 / 地区</th><th>使用人数</th><th>协议</th><th>真实延迟</th><th>速度</th><th>评分</th><th>来源节点</th></tr></thead>
+        <thead><tr><th>操作</th><th>类型</th><th>IP:端口</th><th>国家 / 地区</th><th>使用人数</th><th>运行时间</th><th>协议</th><th>真实延迟</th><th>速度</th><th>评分</th><th>来源节点</th></tr></thead>
         <tbody id="scan-body"></tbody>
       </table>
     </div>
@@ -108,7 +113,7 @@ details.ex summary{cursor:pointer;color:var(--ink)}
     <p class="sub" style="margin:10px 0 0;font-size:12.5px">类型由 ip-api 判定（机房 / 移动 / 其余视为住宅），属尽力而为。延迟为本 VPS 到该 IP 的实测值：TCP 节点测握手，UDP 节点测 ICMP，两者都失败时才退回 VPNGate 自报值（标「自报」）。</p>
   </section>
 
-  <section>
+  <section data-tab="route">
     <h2>路由与代理服务</h2>
     <div class="row">
       <label>路由模式<select id="mode">
@@ -119,6 +124,7 @@ details.ex summary{cursor:pointer;color:var(--ink)}
       <label>代理端口<input id="port" inputmode="numeric" autocomplete="off"></label>
       <label>最大连接数<input id="maxc" inputmode="numeric" autocomplete="off" style="width:100px"></label>
       <label>代理服务<select id="proxy-on"><option value="1">启用</option><option value="0">停用</option></select></label>
+      <label>定时择优换线<select id="auto-best"><option value="1">开启（每 16 分钟）</option><option value="0">关闭</option></select></label>
       <button id="save">保存策略</button>
       <span id="save-msg" class="sub" style="margin:0"></span>
     </div>
@@ -132,7 +138,7 @@ details.ex summary{cursor:pointer;color:var(--ink)}
       <div class="cc-grid" id="ex-grid"></div>
       <button class="ghost" id="ex-clear" style="margin-top:8px">清空</button>
     </details>
-    <p class="sub" style="margin:10px 0 0;font-size:12.5px">只有<b>指定国家</b>模式需要设置目标国家（ANY = 全球），按 VPNGate 评分选择；<b>延迟优先</b>（实测延迟最低）和<b>速度优先</b>（VPNGate 测速最高）在全球范围内挑选，不限国家。选择顺序：<b>先看「优先国家 / 地区」</b>（有勾选时，这些国家的 IP 永远排在前面；它们都连不上才会换别的国家），<b>再按延迟 / 速度</b>，并优先已确认的住宅 IP；三种模式都会跳过「不连接的国家」。修改后点「保存策略」生效。停用代理服务后不再接受新连接，已建立的连接会自然结束。</p>
+    <p class="sub" style="margin:10px 0 0;font-size:12.5px">只有<b>指定国家</b>模式需要设置目标国家（ANY = 全球），按 VPNGate 评分选择；<b>延迟优先</b>（实测延迟最低）和<b>速度优先</b>（VPNGate 测速最高）在全球范围内挑选，不限国家。选择顺序：<b>先看「优先国家 / 地区」</b>（有勾选时，这些国家的 IP 永远排在前面；它们都连不上才会换别的国家），<b>再按延迟 / 速度</b>，并优先已确认的住宅 IP；三种模式都会跳过「不连接的国家」。<b>定时择优</b>：agent 每 16 分钟重新抓取并测速 VPNGate 节点，若发现比当前线路更优的 IP 就自动切换（会短暂中断 15–60 秒，手动固定的 IP 不会被换掉）。修改后点「保存策略」生效。停用代理服务后不再接受新连接，已建立的连接会自然结束。</p>
 
     <h2 style="margin-top:18px">路由预览 <span class="tag" id="route-tag"></span></h2>
     <div class="table-wrap">
@@ -153,7 +159,7 @@ details.ex summary{cursor:pointer;color:var(--ink)}
     </div>
   </section>
 
-  <section>
+  <section data-tab="diag">
     <h2>系统诊断</h2>
     <div class="row" style="margin-bottom:10px">
       <button id="diag-run">运行诊断</button>
@@ -162,7 +168,7 @@ details.ex summary{cursor:pointer;color:var(--ink)}
     <div id="diag-out"></div>
   </section>
 
-  <section>
+  <section data-tab="install">
     <h2>接入新节点</h2>
     <div class="cmd"><code id="install"></code><button class="ghost" data-copy="install">复制</button></div>
     <h2 style="margin-top:16px">完全卸载节点</h2>
@@ -170,7 +176,7 @@ details.ex summary{cursor:pointer;color:var(--ink)}
     <div class="cmd"><code id="uninstall"></code><button class="ghost" data-copy="uninstall">复制</button></div>
   </section>
 
-  <section>
+  <section data-tab="nodes">
     <h2>可用代理列表</h2>
     <div class="row" style="margin-bottom:8px">
       <button class="ghost" id="fmt-socks">SOCKS5</button>
@@ -180,7 +186,7 @@ details.ex summary{cursor:pointer;color:var(--ink)}
     <textarea id="list" readonly placeholder="节点就绪后，这里会列出 scheme://用户:密码@IP:端口"></textarea>
   </section>
 
-  <section>
+  <section data-tab="logs">
     <h2>日志</h2>
     <pre id="logs"></pre>
   </section>
@@ -252,6 +258,7 @@ function render(st) {
     $("country").value = st.policy.country; $("port").value = st.policy.port;
     $("mode").value = st.policy.mode || "country"; $("maxc").value = st.policy.max_conns || 500;
     $("proxy-on").value = st.policy.proxy_enabled === false ? "0" : "1";
+    $("auto-best").value = st.policy.auto_best === false ? "0" : "1";
     SETS.ex.clear(); (st.policy.exclude || []).forEach((c) => SETS.ex.add(c));
     SETS.pf.clear(); (st.policy.prefer || []).forEach((c) => SETS.pf.add(c));
     syncMode(); renderEx(); formReady = true;
@@ -504,6 +511,7 @@ function renderScan() {
     cell(tr, flag(r.cc) + " " + cname(r.cc, r.country) + [r.region, r.city].filter(Boolean).map((x) => " · " + x).join(""));
     const ut = cell(tr, String(r.sessions || 0), "mono");
     ut.title = "当前连接数 " + (r.sessions || 0) + "，累计用户 " + (r.users || 0);
+    cell(tr, r.uptime ? fmtDur(r.uptime) : "-");
     cell(tr, (r.proto || "").toUpperCase());
     latCell(tr, r);
     cell(tr, fmtSpeed(r.speed), "mono");
@@ -545,7 +553,7 @@ $("save").onclick = async () => {
   try {
     await api("/api/policy", {
       country: $("country").value.trim(), port: $("port").value.trim(), mode: $("mode").value,
-      max_conns: $("maxc").value.trim(), proxy_enabled: $("proxy-on").value, exclude: [...SETS.ex], prefer: [...SETS.pf] });
+      max_conns: $("maxc").value.trim(), proxy_enabled: $("proxy-on").value, auto_best: $("auto-best").value, exclude: [...SETS.ex], prefer: [...SETS.pf] });
     setTimeout(loadRoute, 300);
     $("save-msg").textContent = "已保存，节点会在下一次心跳（约 15 秒）内生效";
   } catch (e) { $("save-msg").textContent = e.message; }
@@ -564,6 +572,18 @@ $("fmt-socks").onclick = () => { scheme = "socks5"; loadList(); };
 $("fmt-http").onclick = () => { scheme = "http"; loadList(); };
 $("copy-list").onclick = () => navigator.clipboard.writeText($("list").value);
 document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => navigator.clipboard.writeText($(b.dataset.copy).textContent));
+
+const TABS = ["nodes", "scan", "route", "diag", "install", "logs"];
+function showTab(t) {
+  if (!TABS.includes(t)) t = "nodes";
+  document.querySelectorAll("section[data-tab]").forEach((s) => { s.hidden = s.dataset.tab !== t; });
+  document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+  try { history.replaceState(null, "", "#" + t); } catch {}
+  window.scrollTo(0, 0);
+}
+document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => showTab(b.dataset.t));
+window.addEventListener("hashchange", () => showTab(location.hash.slice(1)));
+showTab(location.hash.slice(1));
 
 refresh();
 setInterval(refresh, 5000);
