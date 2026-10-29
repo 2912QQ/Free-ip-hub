@@ -48,6 +48,7 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now resi-agent
+systemctl enable resi-agent
+systemctl restart resi-agent
 echo "已安装。查看日志: journalctl -u resi-agent -f"
 echo "记得在 VPS 防火墙/安全组放行面板里设置的代理端口（默认 7920）。"

@@ -57,8 +57,9 @@ thead th{position:sticky;top:0;background:var(--card)}
 <body>
 <main>
   <h1>家宽代理控制台</h1>
-  <p class="sub">节点心跳、出口质检、换 IP 与目标国家，都在这里管理。</p>
+  <p class="sub">节点心跳、出口质检、换 IP 与目标国家，都在这里管理。<span class="tag" id="ver"></span></p>
 
+  <div id="old-agent" class="warn" hidden></div>
   <div id="warn" class="warn" hidden>代理账号密码尚未配置（PROXY_USER / PROXY_PASS）。未配置时 agent 会拒绝所有代理连接。</div>
 
   <section>
@@ -164,6 +165,17 @@ const flag = (cc) => /^[A-Z]{2}$/.test(cc || "") ? String.fromCodePoint(...[...c
 const METHOD = { tcp: "TCP", icmp: "ICMP", vpngate: "自报", none: "" };
 
 function render(st) {
+  $("ver").textContent = st.version ? "Hub v" + st.version : "";
+  const old = st.nodes.filter((n) => n.online && !n.scan_state);
+  const oa = $("old-agent");
+  oa.hidden = old.length === 0;
+  oa.textContent = old.length
+    ? "节点 " + old.map((n) => n.id).join("、") + " 的 agent 还是旧版，不会扫描。请在该 VPS 上重新执行下方「接入新节点」的命令来更新。"
+    : "";
+  window.__scanHint = st.nodes.length === 0 ? "还没有节点接入。"
+    : old.length === st.nodes.filter((n) => n.online).length && old.length ? "节点 agent 尚未更新到新版，请重新执行安装命令。"
+    : st.nodes.some((n) => n.scan_state === "scanning") ? "正在扫描中，通常 1–2 分钟，完成后自动显示。"
+    : "agent 已更新但还没有结果：看下方日志是否有「扫描失败 / ip-api 批量查询失败」，或点「立即扫描」。";
   $("warn").hidden = st.proxy_auth_set;
   $("install").textContent = st.install_cmd;
   if (!formReady) { $("country").value = st.policy.country; $("port").value = st.policy.port; formReady = true; }
@@ -240,6 +252,7 @@ function renderScan() {
   const rows = scanFiltered(), body = $("scan-body");
   body.replaceChildren();
   $("scan-empty").hidden = scanData.total > 0;
+  $("scan-empty").textContent = window.__scanHint || "暂无扫描结果。";
   for (const r of rows.slice(0, 300)) {
     const tr = document.createElement("tr");
     const t = cell(tr, "");
@@ -268,7 +281,7 @@ async function loadList() {
 }
 
 async function refresh() {
-  try { render(await api("/api/state")); await Promise.all([loadList(), loadScan()]); } catch (e) { $("save-msg").textContent = String(e.message || e); }
+  try { render(await api("/api/state")); await Promise.all([loadList(), loadScan().catch((e) => { $("scan-msg").textContent = "扫描数据加载失败：" + (e.message || e); })]); } catch (e) { $("save-msg").textContent = String(e.message || e); }
 }
 
 $("save").onclick = async () => {

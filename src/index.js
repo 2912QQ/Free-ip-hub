@@ -3,6 +3,7 @@ import INSTALL_SH from "./install.sh";
 import PANEL_HTML from "./panel.html";
 
 const ONLINE_MS = 60_000;
+const VERSION = "1.1.0";
 const enc = new TextEncoder();
 
 // ---------- helpers ----------
@@ -78,7 +79,7 @@ async function doInit(db) {
   // 老版本数据库补列
   const cols = ((await db.prepare("PRAGMA table_info(nodes)").all()).results || []).map((c) => c.name);
   for (const [n, t] of [["scan_nonce", "INTEGER DEFAULT 0"], ["scan_state", "TEXT"], ["scan_at", "INTEGER DEFAULT 0"]])
-    if (!cols.includes(n)) await db.prepare(`ALTER TABLE nodes ADD COLUMN ${n} ${t}`).run();
+    if (!cols.includes(n)) { try { await db.prepare(`ALTER TABLE nodes ADD COLUMN ${n} ${t}`).run(); } catch {} }
 }
 
 async function getPolicy(db) {
@@ -101,6 +102,11 @@ async function heartbeat(req, env) {
   : req.headers.get("CF-Connecting-IP") || "";
   const db = env.DB;
 
+  const base = [
+    id, clip(b.status, 20), clip(b.exit_ip, 64), clip(b.country, 8), clip(b.isp, 120),
+    b.hosting ? 1 : 0, toInt(b.latency), host, toInt(b.port), now,
+  ];
+  try {
   await db
     .prepare(
       `INSERT INTO nodes (id,status,exit_ip,country,isp,hosting,latency,host,port,last_seen,scan_state,scan_at)
@@ -113,6 +119,17 @@ async function heartbeat(req, env) {
       clip(b.scan_state, 12), toInt(b.scan_at)
     )
     .run();
+  } catch {
+    // 新列不可用时退回旧写法：节点状态和日志必须照常上报
+    await db
+      .prepare(
+        `INSERT INTO nodes (id,status,exit_ip,country,isp,hosting,latency,host,port,last_seen)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)
+         ON CONFLICT(id) DO UPDATE SET status=?2,exit_ip=?3,country=?4,isp=?5,hosting=?6,latency=?7,host=?8,port=?9,last_seen=?10`
+      )
+      .bind(...base)
+      .run();
+  }
 
   const lines = Array.isArray(b.logs) ? b.logs.slice(0, 20) : [];
   if (lines.length) {
@@ -124,7 +141,7 @@ async function heartbeat(req, env) {
     await db.prepare("DELETE FROM logs WHERE id < (SELECT MAX(id) FROM logs) - 300").run();
   }
 
-  const node = await db.prepare("SELECT rotate_nonce, scan_nonce FROM nodes WHERE id=?1").bind(id).first();
+  const node = await db.prepare("SELECT * FROM nodes WHERE id=?1").bind(id).first();
   const policy = await getPolicy(db);
   return json({
     policy: {
@@ -239,6 +256,7 @@ async function state(req, env) {
   const origin = new URL(req.url).origin;
   return json({
     now,
+    version: VERSION,
     nodes,
     logs,
     policy: await getPolicy(db),
