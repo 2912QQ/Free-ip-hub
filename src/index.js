@@ -516,7 +516,7 @@ export default {
             "content-type": "text/html; charset=utf-8",
             "cache-control": "no-store",
             "content-security-policy":
-              "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'",
+              "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob: https:; connect-src 'self'; base-uri 'none'; form-action 'none'",
             "x-content-type-options": "nosniff",
             "referrer-policy": "no-referrer",
           },

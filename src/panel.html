@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>家宽代理控制台</title>
+<title>龍哥代理控制台</title>
 <style>
 :root{
   --ink:#16222b; --muted:#5b6b75; --paper:#f2f5f3; --card:#ffffff; --line:#d5dde0;
@@ -58,6 +58,11 @@ details.ex summary{cursor:pointer;color:var(--ink)}
 .tabs{position:sticky;top:0;z-index:5;display:flex;gap:6px;flex-wrap:wrap;background:var(--paper);padding:8px 0;margin:0 0 12px;border-bottom:1px solid var(--line)}
 .tabs button{padding:6px 14px;font-size:14px;color:var(--ink)}
 .tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+body.has-bg{background-size:cover;background-position:center;background-attachment:fixed;background-repeat:no-repeat}
+body.has-bg section,body.has-bg .head{background:color-mix(in srgb,var(--card) var(--card-a,88%),transparent);backdrop-filter:blur(6px)}
+body.has-bg .tabs{background:color-mix(in srgb,var(--paper) var(--card-a,88%),transparent);backdrop-filter:blur(6px)}
+.head{border-radius:6px;margin-bottom:12px}
+body.has-bg .head{padding:12px 16px}
 .cc-grid{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;max-height:180px;overflow:auto}
 .cc-grid label{flex-direction:row;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--line);border-radius:12px;cursor:pointer;color:var(--ink);font-size:13px}
 .cc-grid label.on{border-color:var(--down);color:var(--down)}
@@ -65,16 +70,28 @@ details.ex summary{cursor:pointer;color:var(--ink)}
 </head>
 <body>
 <main>
-  <h1>家宽代理控制台</h1>
-  <p class="sub">节点心跳、出口质检、换 IP 与目标国家，都在这里管理。<span class="tag" id="ver"></span></p>
+  <div class="head">
+    <h1>龍哥代理控制台</h1>
+    <p class="sub">节点心跳、出口质检、换 IP 与目标国家，都在这里管理。<span class="tag" id="ver"></span></p>
+    <details class="ex" id="bg-box" style="margin-top:6px">
+      <summary>背景设置</summary>
+      <div class="row" style="margin-top:8px">
+        <label>上传图片<input type="file" id="bg-file" accept="image/*" style="width:auto"></label>
+        <label>或填入图片链接（https）<input id="bg-url" placeholder="https://example.com/bg.jpg" style="width:260px" autocomplete="off"></label>
+        <button id="bg-apply">应用链接</button>
+        <label>面板透明度<input type="range" id="bg-op" min="40" max="100" value="88" style="width:140px"></label>
+        <button class="ghost" id="bg-reset">恢复默认</button>
+        <span id="bg-msg" class="sub" style="margin:0"></span>
+      </div>
+      <p class="sub" style="margin:8px 0 0;font-size:12.5px">背景只保存在当前浏览器里，换设备需重新设置。上传的图片会自动压缩到 1920px 以内。</p>
+    </details>
+  </div>
 
   <div id="old-agent" class="warn" hidden></div>
   <div id="warn" class="warn" hidden>代理账号密码尚未配置（PROXY_USER / PROXY_PASS）。未配置时 agent 会拒绝所有代理连接。</div>
 
-  <nav class="tabs" id="tabs"><button class="ghost" data-t="nodes">节点与代理列表</button><button class="ghost" data-t="scan">住宅 IP 扫描</button><button class="ghost" data-t="route">路由与代理服务</button><button class="ghost" data-t="diag">系统诊断</button><button class="ghost" data-t="install">接入 / 卸载</button><button class="ghost" data-t="logs">日志</button></nav>
-
-  <section data-tab="nodes">
-    <h2>节点</h2>
+  <section>
+    <h2>节点状态</h2>
     <div class="table-wrap">
       <table>
         <thead><tr><th>状态</th><th>节点</th><th>代理入口</th><th>出口 IP</th><th>国家</th><th>ISP</th><th>延迟</th><th>最近心跳</th><th></th></tr></thead>
@@ -83,6 +100,18 @@ details.ex summary{cursor:pointer;color:var(--ink)}
     </div>
     <div id="nodes-empty" class="empty" hidden>还没有节点接入。复制下面的安装命令，在一台海外 Linux VPS 上以 root 执行。</div>
   </section>
+
+  <section>
+    <h2>VPS 代理服务状态</h2>
+    <div class="table-wrap">
+      <table style="min-width:760px">
+        <thead><tr><th>节点</th><th>服务</th><th>端口</th><th>当前连接</th><th>累计 / 拒绝</th><th>上行</th><th>下行</th><th>已运行</th></tr></thead>
+        <tbody id="proxy-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <nav class="tabs" id="tabs"><button class="ghost" data-t="nodes">可用代理列表</button><button class="ghost" data-t="scan">住宅 IP 扫描</button><button class="ghost" data-t="route">路由与代理服务</button><button class="ghost" data-t="diag">系统诊断</button><button class="ghost" data-t="install">接入 / 卸载</button><button class="ghost" data-t="logs">日志</button></nav>
 
   <section data-tab="scan">
     <h2>住宅 IP 扫描</h2>
@@ -150,13 +179,6 @@ details.ex summary{cursor:pointer;color:var(--ink)}
     <div id="route-empty" class="empty" hidden>当前模式 + 国家下没有可达的住宅 IP。先完成一次扫描，或换个国家 / 改成 ANY。</div>
     <div class="row" style="margin-top:8px"><button class="ghost" id="reroute">按当前路由重新选择</button><span id="reroute-msg" class="sub" style="margin:0"></span></div>
 
-    <h2 style="margin-top:18px">VPS 代理服务状态</h2>
-    <div class="table-wrap">
-      <table style="min-width:760px">
-        <thead><tr><th>节点</th><th>服务</th><th>端口</th><th>当前连接</th><th>累计 / 拒绝</th><th>上行</th><th>下行</th><th>已运行</th></tr></thead>
-        <tbody id="proxy-body"></tbody>
-      </table>
-    </div>
   </section>
 
   <section data-tab="diag">
@@ -572,6 +594,49 @@ $("fmt-socks").onclick = () => { scheme = "socks5"; loadList(); };
 $("fmt-http").onclick = () => { scheme = "http"; loadList(); };
 $("copy-list").onclick = () => navigator.clipboard.writeText($("list").value);
 document.querySelectorAll("[data-copy]").forEach((b) => b.onclick = () => navigator.clipboard.writeText($(b.dataset.copy).textContent));
+
+const BG = { img: "bg_img", op: "bg_op" };
+const lsGet = (k) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } };
+const lsSet = (k, v) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); return true; } catch { return false; } };
+const bgMsg = (t) => { $("bg-msg").textContent = t; };
+function applyBg() {
+  const u = lsGet(BG.img), op = parseInt(lsGet(BG.op), 10) || 88;
+  document.body.style.backgroundImage = u ? 'url("' + u.replace(/"/g, "%22") + '")' : "";
+  document.body.classList.toggle("has-bg", !!u);
+  document.documentElement.style.setProperty("--card-a", op + "%");
+  $("bg-op").value = op;
+}
+$("bg-apply").onclick = () => {
+  const u = $("bg-url").value.trim();
+  if (!/^https:\/\/\S+$/i.test(u)) return bgMsg("请填入 https:// 开头的图片链接");
+  const im = new Image();
+  im.onload = () => { if (lsSet(BG.img, u)) { applyBg(); bgMsg("已应用"); } else bgMsg("保存失败：浏览器禁用了本地存储"); };
+  im.onerror = () => bgMsg("图片无法加载，请检查链接是否可直接访问");
+  im.src = u;
+};
+$("bg-file").onchange = (e) => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (!/^image\//.test(f.type)) return bgMsg("请选择图片文件");
+  const fr = new FileReader();
+  fr.onload = () => {
+    const im = new Image();
+    im.onload = () => {
+      const k = Math.min(1, 1920 / Math.max(im.width, im.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(im.width * k)); cv.height = Math.max(1, Math.round(im.height * k));
+      cv.getContext("2d").drawImage(im, 0, 0, cv.width, cv.height);
+      if (lsSet(BG.img, cv.toDataURL("image/jpeg", 0.82))) { applyBg(); bgMsg("已应用"); }
+      else bgMsg("图片太大，保存失败，请换一张或改用链接");
+    };
+    im.onerror = () => bgMsg("无法读取这张图片");
+    im.src = fr.result;
+  };
+  fr.readAsDataURL(f);
+};
+$("bg-op").oninput = () => { lsSet(BG.op, $("bg-op").value); applyBg(); };
+$("bg-reset").onclick = () => { lsSet(BG.img, ""); lsSet(BG.op, ""); $("bg-url").value = ""; applyBg(); bgMsg("已恢复默认"); };
+applyBg();
 
 const TABS = ["nodes", "scan", "route", "diag", "install", "logs"];
 function showTab(t) {
