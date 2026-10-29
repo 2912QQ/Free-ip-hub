@@ -3,6 +3,7 @@ import INSTALL_SH from "./install.sh";
 import PANEL_HTML from "./panel.html";
 
 const ONLINE_MS = 60_000;
+const LOG_KEEP_MS = 3 * 24 * 3600 * 1000; // 日志只保留 3 天
 const VERSION = "1.2.0";
 const MODES = ["country", "latency", "speed"];
 const enc = new TextEncoder();
@@ -156,7 +157,7 @@ async function heartbeat(req, env) {
         db.prepare("INSERT INTO logs (node_id, ts, line) VALUES (?1,?2,?3)").bind(id, now, clip(l, 300))
       )
     );
-    await db.prepare("DELETE FROM logs WHERE id < (SELECT MAX(id) FROM logs) - 300").run();
+    await db.prepare("DELETE FROM logs WHERE ts < ?1").bind(now - LOG_KEEP_MS).run();
   }
 
   const pinFail = clip(b.pin_fail, 45);
@@ -366,7 +367,10 @@ async function state(req, env) {
   const nodes = ((await db.prepare("SELECT * FROM nodes ORDER BY last_seen DESC").all()).results || []).map(
     (n) => ({ ...n, online: now - n.last_seen < ONLINE_MS })
   );
-  const logs = (await db.prepare("SELECT node_id, ts, line FROM logs ORDER BY id DESC LIMIT 100").all()).results || [];
+  const cutoff = now - LOG_KEEP_MS;
+  try { await db.prepare("DELETE FROM logs WHERE ts < ?1").bind(cutoff).run(); } catch {}
+  // 最新在前，只取 3 天内
+  const logs = (await db.prepare("SELECT node_id, ts, line FROM logs WHERE ts >= ?1 ORDER BY ts DESC, id DESC LIMIT 300").bind(cutoff).all()).results || [];
   const origin = new URL(req.url).origin;
   return json({
     now,
@@ -432,7 +436,7 @@ async function proxies(req, env) {
       country: n.country,
       exit_ip: n.exit_ip,
       latency: n.latency,
-      url: `${scheme}://${encodeURIComponent(env.PROXY_USER || "")}:${encodeURIComponent(env.PROXY_PASS || "")}@${n.host}:${n.port}`,
+      url: `${scheme}://${encodeURIComponent(env.PROXY_USER || "")}:${encodeURIComponent(env.PROXY_PASS || "")}@${n.host.includes(":") ? `[${n.host}]` : n.host}:${n.port}`,
     }));
   if (url.searchParams.get("format") === "json") return json(list);
   return text(list.map((x) => x.url).join("\n") + (list.length ? "\n" : ""));

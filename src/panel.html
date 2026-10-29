@@ -253,8 +253,9 @@ function render(st) {
   }
 
   renderProxy(st);
-  $("logs").textContent = st.logs.slice().reverse()
-    .map((l) => "[" + l.node_id + "] " + l.line).join("\n");
+  // 最新在前（接口已按时间倒序返回），带时间戳；服务端只保留 3 天
+  $("logs").textContent = st.logs
+    .map((l) => new Date(l.ts).toLocaleString("zh-CN", { hour12: false }) + " [" + l.node_id + "] " + l.line).join("\n");
 }
 
 const fmtBytes = (n) => { n = Number(n) || 0; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return (i ? n.toFixed(1) : n) + " " + u[i]; };
@@ -464,7 +465,10 @@ async function loadScan() { scanData = await api("/api/scan?limit=2000"); render
 
 async function loadList() {
   const r = await fetch("/api/proxies?scheme=" + scheme);
-  $("list").value = await r.text();
+  if (!r.ok) { $("list").value = "加载失败：HTTP " + r.status; return; }
+  const t = await r.text();
+  $("list").value = t || "";
+  $("list").placeholder = "暂无可用代理：没有在线且状态为 up 的节点（隧道可能正在重连，请看下方日志）";
 }
 
 async function refresh() {
