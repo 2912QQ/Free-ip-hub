@@ -46,6 +46,7 @@ pre{margin:0;max-height:260px;overflow:auto;font:12.5px/1.6 var(--mono);color:va
 .badge{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;border:1px solid var(--line);color:var(--muted)}
 .badge.res{color:var(--up);border-color:var(--up)} .badge.host{color:var(--warn);border-color:var(--warn)} .badge.mob{color:var(--accent);border-color:var(--accent)}
 .lat-good{color:var(--up)} .lat-mid{color:var(--warn)} .lat-bad{color:var(--down)}
+.cur{background:color-mix(in srgb,var(--up) 12%,transparent)}
 .tag{color:var(--muted);font-size:11px;margin-left:4px}
 select{font:inherit;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:7px 9px}
 .stats{display:flex;gap:20px;flex-wrap:wrap;margin:0 0 12px;color:var(--muted);font-size:13px}
@@ -87,14 +88,14 @@ thead th{position:sticky;top:0;background:var(--card)}
         <option value="res">仅住宅</option><option value="all">全部</option>
         <option value="host">仅机房</option><option value="mob">仅移动网络</option></select></label>
       <label>延迟上限 (ms)<input id="f-lat" inputmode="numeric" placeholder="不限" autocomplete="off"></label>
-      <label>排序<select id="f-sort"><option value="lat">延迟低→高</option><option value="score">评分高→低</option></select></label>
+      <label>排序<select id="f-sort"><option value="lat">延迟低→高</option><option value="speed">速度高→低</option><option value="score">评分高→低</option></select></label>
       <button id="scan-now">立即扫描</button>
       <button class="ghost" id="copy-scan">复制 IP:端口</button>
       <span id="scan-msg" class="sub" style="margin:0"></span>
     </div>
     <div class="table-wrap scroll">
-      <table style="min-width:860px">
-        <thead><tr><th>类型</th><th>IP:端口</th><th>国家 / 地区</th><th>ISP</th><th>协议</th><th>真实延迟</th><th>评分</th><th>来源节点</th></tr></thead>
+      <table style="min-width:1040px">
+        <thead><tr><th>类型</th><th>IP:端口</th><th>国家 / 地区</th><th>ISP</th><th>协议</th><th>真实延迟</th><th>速度</th><th>评分</th><th>来源节点</th><th>操作</th></tr></thead>
         <tbody id="scan-body"></tbody>
       </table>
     </div>
@@ -103,13 +104,47 @@ thead th{position:sticky;top:0;background:var(--card)}
   </section>
 
   <section>
-    <h2>调度策略</h2>
+    <h2>路由与代理服务</h2>
     <div class="row">
+      <label>路由模式<select id="mode">
+        <option value="country">指定国家（按评分）</option>
+        <option value="latency">延迟优先</option>
+        <option value="speed">速度优先</option></select></label>
       <label>目标国家（两位代码，或 ANY）<input id="country" maxlength="3" autocomplete="off"></label>
       <label>代理端口<input id="port" inputmode="numeric" autocomplete="off"></label>
+      <label>最大连接数<input id="maxc" inputmode="numeric" autocomplete="off" style="width:100px"></label>
+      <label>代理服务<select id="proxy-on"><option value="1">启用</option><option value="0">停用</option></select></label>
       <button id="save">保存策略</button>
       <span id="save-msg" class="sub" style="margin:0"></span>
     </div>
+    <p class="sub" style="margin:10px 0 0;font-size:12.5px">三种模式都只在「目标国家」内挑选（ANY = 全球），并优先使用已扫描确认的住宅 IP。<b>延迟优先</b>：实测延迟最低；<b>速度优先</b>：VPNGate 测速最高；<b>指定国家</b>：只限定国家，按 VPNGate 评分。停用代理服务后不再接受新连接，已建立的连接会自然结束。</p>
+
+    <h2 style="margin-top:18px">路由预览 <span class="tag" id="route-tag"></span></h2>
+    <div class="table-wrap">
+      <table style="min-width:640px">
+        <thead><tr><th>#</th><th>IP:端口</th><th>国家 / 地区</th><th>真实延迟</th><th>速度</th><th>评分</th><th>来源节点</th></tr></thead>
+        <tbody id="route-body"></tbody>
+      </table>
+    </div>
+    <div id="route-empty" class="empty" hidden>当前模式 + 国家下没有可达的住宅 IP。先完成一次扫描，或换个国家 / 改成 ANY。</div>
+    <div class="row" style="margin-top:8px"><button class="ghost" id="reroute">按当前路由重新选择</button><span id="reroute-msg" class="sub" style="margin:0"></span></div>
+
+    <h2 style="margin-top:18px">VPS 代理服务状态</h2>
+    <div class="table-wrap">
+      <table style="min-width:760px">
+        <thead><tr><th>节点</th><th>服务</th><th>端口</th><th>当前连接</th><th>累计 / 拒绝</th><th>上行</th><th>下行</th><th>已运行</th></tr></thead>
+        <tbody id="proxy-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>系统诊断</h2>
+    <div class="row" style="margin-bottom:10px">
+      <button id="diag-run">运行诊断</button>
+      <span id="diag-msg" class="sub" style="margin:0">检查运行环境、网络、隧道、路由、代理服务，并从 Cloudflare 测试代理端口是否对外开放。</span>
+    </div>
+    <div id="diag-out"></div>
   </section>
 
   <section>
@@ -172,13 +207,18 @@ function render(st) {
   oa.textContent = old.length
     ? "节点 " + old.map((n) => n.id).join("、") + " 的 agent 还是旧版，不会扫描。请在该 VPS 上重新执行下方「接入新节点」的命令来更新。"
     : "";
+  window.__nodes = st.nodes;
   window.__scanHint = st.nodes.length === 0 ? "还没有节点接入。"
     : old.length === st.nodes.filter((n) => n.online).length && old.length ? "节点 agent 尚未更新到新版，请重新执行安装命令。"
     : st.nodes.some((n) => n.scan_state === "scanning") ? "正在扫描中，通常 1–2 分钟，完成后自动显示。"
     : "agent 已更新但还没有结果：看下方日志是否有「扫描失败 / ip-api 批量查询失败」，或点「立即扫描」。";
   $("warn").hidden = st.proxy_auth_set;
   $("install").textContent = st.install_cmd;
-  if (!formReady) { $("country").value = st.policy.country; $("port").value = st.policy.port; formReady = true; }
+  if (!formReady) {
+    $("country").value = st.policy.country; $("port").value = st.policy.port;
+    $("mode").value = st.policy.mode || "country"; $("maxc").value = st.policy.max_conns || 500;
+    $("proxy-on").value = st.policy.proxy_enabled === false ? "0" : "1"; formReady = true;
+  }
 
   const body = $("nodes");
   body.replaceChildren();
@@ -203,13 +243,135 @@ function render(st) {
     rot.onclick = async () => { rot.disabled = true; try { await api("/api/rotate", { node_id: n.id }); } finally { setTimeout(refresh, 800); } };
     const del = document.createElement("button"); del.className = "ghost danger"; del.textContent = "移除"; del.style.marginLeft = "6px";
     del.onclick = async () => { if (confirm("从面板移除节点 " + n.id + "？（agent 仍会重新上报）")) { await api("/api/nodes/delete", { node_id: n.id }); refresh(); } };
-    ops.append(rot, del); tr.appendChild(ops);
+    if (n.pin_ip) {
+      const un = document.createElement("button"); un.className = "ghost"; un.textContent = "取消固定 " + n.pin_ip; un.style.marginLeft = "6px";
+      un.onclick = async () => { un.disabled = true; try { await api("/api/switch", { node_id: n.id, ip: "" }); } finally { setTimeout(refresh, 800); } };
+      ops.append(rot, un, del);
+    } else ops.append(rot, del);
+    tr.appendChild(ops);
     body.appendChild(tr);
   }
 
+  renderProxy(st);
   $("logs").textContent = st.logs.slice().reverse()
     .map((l) => "[" + l.node_id + "] " + l.line).join("\n");
 }
+
+const fmtBytes = (n) => { n = Number(n) || 0; const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0; while (n >= 1024 && i < 4) { n /= 1024; i++; } return (i ? n.toFixed(1) : n) + " " + u[i]; };
+const fmtSpeed = (bps) => bps ? (bps / 1e6).toFixed(1) + " Mbps" : "-";
+const fmtDur = (ms) => { const m = Math.floor(ms / 60000); return m < 60 ? m + " 分钟" : m < 1440 ? Math.floor(m / 60) + " 小时 " + (m % 60) + " 分" : Math.floor(m / 1440) + " 天 " + Math.floor((m % 1440) / 60) + " 小时"; };
+
+function renderProxy(st) {
+  const body = $("proxy-body"); body.replaceChildren();
+  for (const n of st.nodes) {
+    let p = null; try { p = n.proxy_stats ? JSON.parse(n.proxy_stats) : null; } catch {}
+    const tr = document.createElement("tr");
+    cell(tr, n.id);
+    if (!p) { const td = cell(tr, "等待 agent 上报（需更新到新版）"); td.colSpan = 7; body.appendChild(tr); continue; }
+    const sv = cell(tr, "");
+    const dot = document.createElement("span");
+    const live = n.online && p.listening;
+    dot.className = "dot " + (!n.online ? "off" : live ? "up" : "connecting");
+    sv.append(dot, !n.online ? "离线" : !p.on ? "已停用" : p.listening ? "监听中" : "未监听");
+    cell(tr, p.port || "-", "mono");
+    cell(tr, p.active + " / " + p.max, "mono");
+    cell(tr, p.total + " / " + p.rejected, "mono");
+    cell(tr, fmtBytes(p.up), "mono");
+    cell(tr, fmtBytes(p.down), "mono");
+    cell(tr, p.since && p.listening ? fmtDur(st.now - p.since) : "-");
+    body.appendChild(tr);
+  }
+}
+
+async function loadRoute() {
+  const d = await api("/api/route/preview?limit=5");
+  $("route-tag").textContent = "模式：" + ({ country: "指定国家", latency: "延迟优先", speed: "速度优先" }[d.mode] || d.mode) +
+    " · 国家：" + d.country + " · 候选 " + d.total;
+  const body = $("route-body"); body.replaceChildren();
+  $("route-empty").hidden = d.items.length > 0;
+  d.items.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    cell(tr, String(i + 1));
+    cell(tr, r.host + ":" + r.port, "mono");
+    cell(tr, flag(r.cc) + " " + cname(r.cc, r.country) + [r.region, r.city].filter(Boolean).map((x) => " · " + x).join(""));
+    latCell(tr, r);
+    cell(tr, fmtSpeed(r.speed), "mono");
+    cell(tr, String(r.score || "-"), "mono");
+    cell(tr, r.node_id);
+    body.appendChild(tr);
+  });
+}
+
+// ---- 系统诊断
+const STATUS = { ok: ["通过", "res"], warn: ["警告", "host"], fail: ["失败", "bad"] };
+let diagData = { nodes: [] }, portChecks = {}, diagTimer = null;
+
+function renderDiag() {
+  const box = $("diag-out"); box.replaceChildren();
+  if (!diagData.nodes.length) { const e = document.createElement("div"); e.className = "empty"; e.textContent = "还没有诊断结果，点「运行诊断」。agent 启动约 20 秒后也会自动跑一次。"; box.appendChild(e); return; }
+  for (const nd of diagData.nodes) {
+    const items = nd.items.slice();
+    const pc = portChecks[nd.node_id];
+    if (pc) items.push({ name: "代理端口对外可达（Cloudflare 探测）", status: pc.ok ? "ok" : "fail",
+      detail: pc.ok ? (pc.host + ":" + pc.port + " 可连接") : ((pc.host ? pc.host + ":" + pc.port + " " : "") + (pc.error || "不可达") + "；请检查 VPS 防火墙 / 云安全组是否放行该端口"), ms: pc.ms ?? null });
+    const cnt = { ok: 0, warn: 0, fail: 0 }; items.forEach((x) => cnt[x.status]++);
+    const h = document.createElement("h2"); h.style.marginTop = "12px";
+    h.textContent = nd.node_id + " · 通过 " + cnt.ok + " · 警告 " + cnt.warn + " · 失败 " + cnt.fail + " · " + ago(Date.now() - nd.ts);
+    box.appendChild(h);
+    const wrap = document.createElement("div"); wrap.className = "table-wrap";
+    const t = document.createElement("table"); t.style.minWidth = "640px";
+    const tb = document.createElement("tbody");
+    // 失败排最前
+    const order = { fail: 0, warn: 1, ok: 2 };
+    items.sort((a, b) => order[a.status] - order[b.status]);
+    for (const x of items) {
+      const tr = document.createElement("tr");
+      const st = cell(tr, ""); const b = document.createElement("span");
+      b.className = "badge " + (STATUS[x.status][1] === "bad" ? "" : STATUS[x.status][1]);
+      if (x.status === "fail") b.style.cssText = "color:var(--down);border-color:var(--down)";
+      b.textContent = STATUS[x.status][0]; st.appendChild(b);
+      cell(tr, x.name);
+      const d = cell(tr, x.detail || ""); d.style.whiteSpace = "normal";
+      cell(tr, x.ms != null ? x.ms + " ms" : "", "mono");
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb); wrap.appendChild(t); box.appendChild(wrap);
+  }
+}
+
+async function loadDiag() { diagData = await api("/api/diag"); renderDiag(); }
+
+$("diag-run").onclick = async () => {
+  const start = Date.now(), m = $("diag-msg"), btn = $("diag-run");
+  btn.disabled = true; portChecks = {}; m.textContent = "已下发，节点会在下一次心跳（约 15 秒）内开始诊断…";
+  try { await api("/api/diag/run", {}); } catch (e) { m.textContent = e.message; btn.disabled = false; return; }
+  clearInterval(diagTimer);
+  let tries = 0;
+  diagTimer = setInterval(async () => {
+    tries++;
+    try {
+      await loadDiag();
+      const st = await api("/api/state");
+      const online = st.nodes.filter((n) => n.online).map((n) => n.id);
+      const done = online.length > 0 && online.every((id) => diagData.nodes.some((d) => d.node_id === id && d.ts >= start));
+      if (done || tries > 30) {
+        clearInterval(diagTimer); btn.disabled = false;
+        for (const id of online) { try { portChecks[id] = await api("/api/diag/port?node_id=" + encodeURIComponent(id)); } catch {} }
+        renderDiag();
+        m.textContent = done ? "诊断完成" : "部分节点未在 90 秒内返回结果（可能离线或 agent 未更新）";
+      } else m.textContent = "诊断中…（" + tries * 3 + " 秒）";
+    } catch (e) { m.textContent = e.message; }
+  }, 3000);
+};
+
+$("reroute").onclick = async () => {
+  const m = $("reroute-msg"); m.textContent = "";
+  try {
+    const st = await api("/api/state");
+    for (const n of st.nodes.filter((x) => x.online)) await api("/api/rotate", { node_id: n.id });
+    m.textContent = "已下发，节点会在下一次心跳内按当前路由重新选择";
+  } catch (e) { m.textContent = e.message; }
+};
 
 let scanData = null;
 
@@ -230,8 +392,8 @@ function scanFiltered() {
     (type === "all" || (type === "res" && r.residential) || (type === "host" && r.hosting) || (type === "mob" && r.mobile)) &&
     (!maxLat || (r.latency != null && r.latency <= maxLat)));
   const key = $("f-sort").value;
-  rows.sort(key === "score"
-    ? (a, b) => b.score - a.score
+  rows.sort(key === "score" ? (a, b) => b.score - a.score
+    : key === "speed" ? (a, b) => (b.speed || 0) - (a.speed || 0) || (a.latency ?? 1e9) - (b.latency ?? 1e9)
     : (a, b) => (a.latency ?? 1e9) - (b.latency ?? 1e9) || b.score - a.score);
   return rows;
 }
@@ -265,12 +427,37 @@ function renderScan() {
     cell(tr, r.isp || "-");
     cell(tr, (r.proto || "").toUpperCase());
     latCell(tr, r);
+    cell(tr, fmtSpeed(r.speed), "mono");
     cell(tr, r.score ? String(r.score) : "-", "mono");
     cell(tr, r.node_id);
+    const node = (window.__nodes || []).find((n) => n.id === r.node_id);
+    const ops = document.createElement("td");
+    if (node && (node.pin_ip === r.ip || (node.status === "up" && node.exit_ip === r.ip))) {
+      tr.className = "cur";
+      const t = document.createElement("span"); t.className = "badge res";
+      t.textContent = node.pin_ip === r.ip ? "已固定" : "当前使用"; ops.appendChild(t);
+    } else if (r.latency != null) {
+      const sw = document.createElement("button"); sw.className = "ghost"; sw.textContent = "切换";
+      sw.onclick = () => switchTo(r, sw);
+      ops.appendChild(sw);
+    }
+    tr.appendChild(ops);
     body.appendChild(tr);
   }
   if (rows.length > 300) $("scan-msg").textContent = "仅显示前 300 条，共 " + rows.length + " 条符合条件";
   else if ($("scan-msg").dataset.busy !== "1") $("scan-msg").textContent = "符合条件 " + rows.length + " 条";
+}
+
+async function switchTo(r, btn) {
+  const m = $("scan-msg"); m.dataset.busy = "1";
+  if (!confirm("让节点 " + r.node_id + " 切换到 " + r.host + "（" + cname(r.cc, r.country) + "，" + r.latency + " ms）？\n切换期间代理会短暂中断，约 15–60 秒。")) return;
+  btn.disabled = true;
+  try {
+    await api("/api/switch", { node_id: r.node_id, ip: r.ip });
+    m.textContent = "已下发：节点会在下一次心跳（约 15 秒）内开始切换，连不上会自动恢复自动选择";
+  } catch (e) { m.textContent = "切换失败：" + e.message; btn.disabled = false; }
+  setTimeout(() => { m.dataset.busy = "0"; refresh(); }, 20000);
+  refresh();
 }
 
 async function loadScan() { scanData = await api("/api/scan?limit=2000"); renderScan(); }
@@ -281,12 +468,15 @@ async function loadList() {
 }
 
 async function refresh() {
-  try { render(await api("/api/state")); await Promise.all([loadList(), loadScan().catch((e) => { $("scan-msg").textContent = "扫描数据加载失败：" + (e.message || e); })]); } catch (e) { $("save-msg").textContent = String(e.message || e); }
+  try { render(await api("/api/state")); await Promise.all([loadRoute().catch(() => {}), loadDiag().catch(() => {}), loadList(), loadScan().catch((e) => { $("scan-msg").textContent = "扫描数据加载失败：" + (e.message || e); })]); } catch (e) { $("save-msg").textContent = String(e.message || e); }
 }
 
 $("save").onclick = async () => {
   try {
-    await api("/api/policy", { country: $("country").value.trim(), port: $("port").value.trim() });
+    await api("/api/policy", {
+      country: $("country").value.trim(), port: $("port").value.trim(), mode: $("mode").value,
+      max_conns: $("maxc").value.trim(), proxy_enabled: $("proxy-on").value });
+    setTimeout(loadRoute, 300);
     $("save-msg").textContent = "已保存，节点会在下一次心跳（约 15 秒）内生效";
   } catch (e) { $("save-msg").textContent = e.message; }
 };

@@ -3,7 +3,8 @@ import INSTALL_SH from "./install.sh";
 import PANEL_HTML from "./panel.html";
 
 const ONLINE_MS = 60_000;
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
+const MODES = ["country", "latency", "speed"];
 const enc = new TextEncoder();
 
 // ---------- helpers ----------
@@ -75,18 +76,31 @@ async function doInit(db) {
         PRIMARY KEY (node_id, ip))`
     ),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_scan_cc ON scan_ips (cc, residential)"),
+    db.prepare("CREATE TABLE IF NOT EXISTS diag (node_id TEXT PRIMARY KEY, ts INTEGER, items TEXT)"),
   ]);
-  // 老版本数据库补列
-  const cols = ((await db.prepare("PRAGMA table_info(nodes)").all()).results || []).map((c) => c.name);
-  for (const [n, t] of [["scan_nonce", "INTEGER DEFAULT 0"], ["scan_state", "TEXT"], ["scan_at", "INTEGER DEFAULT 0"]])
-    if (!cols.includes(n)) { try { await db.prepare(`ALTER TABLE nodes ADD COLUMN ${n} ${t}`).run(); } catch {} }
+  // 老版本数据库补列（失败不影响主流程）
+  await addCols(db, "nodes", [
+    ["scan_nonce", "INTEGER DEFAULT 0"], ["scan_state", "TEXT"], ["scan_at", "INTEGER DEFAULT 0"],
+    ["pin_ip", "TEXT"], ["diag_nonce", "INTEGER DEFAULT 0"], ["proxy_stats", "TEXT"],
+  ]);
+  await addCols(db, "scan_ips", [["speed", "INTEGER DEFAULT 0"]]);
 }
-
+async function addCols(db, table, list) {
+  const cols = ((await db.prepare(`PRAGMA table_info(${table})`).all()).results || []).map((c) => c.name);
+  for (const [n, t] of list)
+    if (!cols.includes(n)) { try { await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${n} ${t}`).run(); } catch {} }
+}
 async function getPolicy(db) {
   const rows = (await db.prepare("SELECT k, v FROM policy").all()).results || [];
-  const p = { country: "US", port: "7920" };
+  const p = { country: "US", port: "7920", mode: "country", proxy_enabled: "1", max_conns: "500" };
   for (const r of rows) p[r.k] = r.v;
-  return { country: p.country, port: toInt(p.port, 7920) };
+  return {
+    country: p.country,
+    port: toInt(p.port, 7920),
+    mode: MODES.includes(p.mode) ? p.mode : "country",
+    proxy_enabled: p.proxy_enabled !== "0",
+    max_conns: Math.min(Math.max(toInt(p.max_conns, 500), 1), 5000),
+  };
 }
 
 // ---------- handlers ----------
@@ -131,6 +145,10 @@ async function heartbeat(req, env) {
       .run();
   }
 
+  if (b.proxy && typeof b.proxy === "object") {
+    try { await db.prepare("UPDATE nodes SET proxy_stats=?2 WHERE id=?1").bind(id, clip(JSON.stringify(b.proxy), 600)).run(); } catch {}
+  }
+
   const lines = Array.isArray(b.logs) ? b.logs.slice(0, 20) : [];
   if (lines.length) {
     await db.batch(
@@ -141,17 +159,27 @@ async function heartbeat(req, env) {
     await db.prepare("DELETE FROM logs WHERE id < (SELECT MAX(id) FROM logs) - 300").run();
   }
 
+  const pinFail = clip(b.pin_fail, 45);
+  if (pinFail) {
+    try { await db.prepare("UPDATE nodes SET pin_ip=NULL WHERE id=?1 AND pin_ip=?2").bind(id, pinFail).run(); } catch {}
+  }
   const node = await db.prepare("SELECT * FROM nodes WHERE id=?1").bind(id).first();
   const policy = await getPolicy(db);
   return json({
     policy: {
       country: policy.country,
       port: policy.port,
+      mode: policy.mode,
+      proxy_enabled: policy.proxy_enabled,
+      max_conns: policy.max_conns,
       proxy_user: env.PROXY_USER || "",
       proxy_pass: env.PROXY_PASS || "",
     },
     rotate_nonce: node?.rotate_nonce ?? 0,
     scan_nonce: node?.scan_nonce ?? 0,
+    diag_nonce: node?.diag_nonce ?? 0,
+    pin_ip: node?.pin_ip || "",
+    now,
   });
 }
 
@@ -174,17 +202,17 @@ async function scanIngest(req, env) {
     if (!IPV4.test(ip)) continue;
     stmts.push(
       db.prepare(
-        `INSERT INTO scan_ips (node_id,ip,host,port,proto,cc,country,region,city,isp,org,hosting,proxy,mobile,residential,latency,method,score,scan_id,scanned_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)
+        `INSERT INTO scan_ips (node_id,ip,host,port,proto,cc,country,region,city,isp,org,hosting,proxy,mobile,residential,latency,method,score,scan_id,scanned_at,speed)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)
          ON CONFLICT(node_id,ip) DO UPDATE SET host=excluded.host,port=excluded.port,proto=excluded.proto,cc=excluded.cc,
            country=excluded.country,region=excluded.region,city=excluded.city,isp=excluded.isp,org=excluded.org,
            hosting=excluded.hosting,proxy=excluded.proxy,mobile=excluded.mobile,residential=excluded.residential,
-           latency=excluded.latency,method=excluded.method,score=excluded.score,scan_id=excluded.scan_id,scanned_at=excluded.scanned_at`
+           latency=excluded.latency,method=excluded.method,score=excluded.score,scan_id=excluded.scan_id,scanned_at=excluded.scanned_at,speed=excluded.speed`
       ).bind(
         id, ip, clip(x.host, 80), toInt(x.port), clip(x.proto, 4), clip(x.cc, 4).toUpperCase(),
         clip(x.country, 60), clip(x.region, 60), clip(x.city, 60), clip(x.isp, 120), clip(x.org, 120),
         bool01(x.hosting), bool01(x.proxy), bool01(x.mobile), bool01(x.residential),
-        x.latency == null ? null : toInt(x.latency), clip(x.method, 10), toInt(x.score), scanId, now
+        x.latency == null ? null : toInt(x.latency), clip(x.method, 10), toInt(x.score), scanId, now, toInt(x.speed)
       )
     );
   }
@@ -238,6 +266,92 @@ async function scanList(req, env) {
   });
 }
 
+// 路由预览：按当前模式 + 国家，从最近一次扫描里挑出“agent 下一次会优先尝试”的前 N 个
+async function routePreview(req, env) {
+  const q = new URL(req.url).searchParams;
+  const pol = await getPolicy(env.DB);
+  const nodeId = clip(q.get("node_id"), 64);
+  const rows = ((await env.DB.prepare("SELECT * FROM scan_ips").all()).results || []).filter(
+    (r) => r.residential && r.latency != null && (!nodeId || r.node_id === nodeId) &&
+      (pol.country === "ANY" || r.cc === pol.country)
+  );
+  const by = {
+    speed: (a, b) => (b.speed || 0) - (a.speed || 0) || a.latency - b.latency,
+    latency: (a, b) => a.latency - b.latency || (b.speed || 0) - (a.speed || 0),
+    country: (a, b) => b.score - a.score || a.latency - b.latency,
+  }[pol.mode];
+  rows.sort(by);
+  const limit = Math.min(Math.max(toInt(q.get("limit"), 5), 1), 50);
+  return json({ mode: pol.mode, country: pol.country, total: rows.length, items: rows.slice(0, limit) });
+}
+
+async function diagIngest(req, env) {
+  const b = await readJson(req);
+  if (!b) return json({ error: "bad json" }, 400);
+  const id = clip(b.node_id, 64);
+  if (!/^[\w.-]+$/.test(id)) return json({ error: "bad node_id" }, 400);
+  const items = (Array.isArray(b.items) ? b.items : []).slice(0, 60).map((x) => ({
+    id: clip(x?.id, 24), name: clip(x?.name, 40), status: ["ok", "warn", "fail"].includes(x?.status) ? x.status : "warn",
+    detail: clip(x?.detail, 200), ms: x?.ms == null ? null : toInt(x.ms),
+  }));
+  await env.DB.prepare("INSERT INTO diag (node_id,ts,items) VALUES (?1,?2,?3) ON CONFLICT(node_id) DO UPDATE SET ts=?2,items=?3")
+    .bind(id, Date.now(), JSON.stringify(items)).run();
+  return json({ ok: true });
+}
+
+async function diagList(env) {
+  const rows = (await env.DB.prepare("SELECT * FROM diag").all()).results || [];
+  return json({ nodes: rows.map((r) => ({ node_id: r.node_id, ts: r.ts, items: JSON.parse(r.items || "[]") })) });
+}
+
+async function diagRun(req, env) {
+  const b = (await readJson(req)) || {};
+  if (b.node_id) await env.DB.prepare("UPDATE nodes SET diag_nonce = diag_nonce + 1 WHERE id=?1").bind(clip(b.node_id, 64)).run();
+  else await env.DB.prepare("UPDATE nodes SET diag_nonce = diag_nonce + 1").run();
+  return json({ ok: true });
+}
+
+// 从 Cloudflare 边缘测试代理端口是否对公网开放（排查防火墙 / 安全组）
+async function portCheck(req, env) {
+  const id = clip(new URL(req.url).searchParams.get("node_id"), 64);
+  const n = await env.DB.prepare("SELECT host, port FROM nodes WHERE id=?1").bind(id).first();
+  if (!n || !n.host || !n.port) return json({ ok: false, error: "节点没有上报地址 / 端口" });
+  let connect;
+  try { ({ connect } = await import("cloudflare:sockets")); }
+  catch { return json({ ok: false, error: "当前运行环境不支持 TCP 探测", host: n.host, port: n.port }); }
+  const t = Date.now();
+  let timer;
+  try {
+    const sock = connect({ hostname: n.host, port: n.port });
+    await Promise.race([
+      sock.opened,
+      new Promise((_, rej) => { timer = setTimeout(() => rej(new Error("连接超时（5 秒）")), 5000); }),
+    ]);
+    clearTimeout(timer);
+    try { await sock.close(); } catch {}
+    return json({ ok: true, ms: Date.now() - t, host: n.host, port: n.port });
+  } catch (e) {
+    clearTimeout(timer);
+    return json({ ok: false, error: String(e?.message || e), host: n.host, port: n.port });
+  }
+}
+
+// 切换：让指定节点改用扫描出的某个 IP（ip 为空 = 取消固定，恢复自动选择）
+async function switchIp(req, env) {
+  const b = await readJson(req);
+  if (!b) return json({ error: "bad json" }, 400);
+  const id = clip(b.node_id, 64), ip = clip(b.ip, 45);
+  const node = await env.DB.prepare("SELECT id FROM nodes WHERE id=?1").bind(id).first();
+  if (!node) return json({ error: "节点不存在" }, 404);
+  if (ip) {
+    if (!IPV4.test(ip)) return json({ error: "ip 格式错误" }, 400);
+    const hit = await env.DB.prepare("SELECT 1 AS x FROM scan_ips WHERE node_id=?1 AND ip=?2").bind(id, ip).first();
+    if (!hit) return json({ error: "该 IP 不在此节点的扫描结果里，请先重新扫描" }, 404);
+  }
+  await env.DB.prepare("UPDATE nodes SET pin_ip=?2 WHERE id=?1").bind(id, ip || null).run();
+  return json({ ok: true, pin_ip: ip });
+}
+
 async function scanNow(req, env) {
   let b = {};
   try { b = await req.json(); } catch {}
@@ -272,13 +386,20 @@ async function readJson(req) {
 async function setPolicy(req, env) {
   const b = await readJson(req);
   if (!b) return json({ error: "bad json" }, 400);
-  const country = String(b.country || "").toUpperCase();
-  const port = toInt(b.port);
+  const cur = await getPolicy(env.DB);
+  const country = String(b.country || cur.country).toUpperCase();
+  const port = toInt(b.port, cur.port);
+  const mode = String(b.mode || cur.mode);
+  const enabled = b.proxy_enabled === undefined ? cur.proxy_enabled : !(b.proxy_enabled === false || b.proxy_enabled === "0" || b.proxy_enabled === 0);
+  const maxc = toInt(b.max_conns, cur.max_conns);
   if (!/^([A-Z]{2}|ANY)$/.test(country)) return json({ error: "country 需为两位国家代码，或 ANY" }, 400);
   if (port < 1024 || port > 65535) return json({ error: "port 需在 1024-65535" }, 400);
+  if (!MODES.includes(mode)) return json({ error: "mode 需为 country / latency / speed" }, 400);
+  if (maxc < 1 || maxc > 5000) return json({ error: "最大连接数需在 1-5000" }, 400);
+  const up = (k, v) => env.DB.prepare("INSERT INTO policy (k,v) VALUES (?1,?2) ON CONFLICT(k) DO UPDATE SET v=?2").bind(k, v);
   await env.DB.batch([
-    env.DB.prepare("INSERT INTO policy (k,v) VALUES ('country',?1) ON CONFLICT(k) DO UPDATE SET v=?1").bind(country),
-    env.DB.prepare("INSERT INTO policy (k,v) VALUES ('port',?1) ON CONFLICT(k) DO UPDATE SET v=?1").bind(String(port)),
+    up("country", country), up("port", String(port)), up("mode", mode),
+    up("proxy_enabled", enabled ? "1" : "0"), up("max_conns", String(maxc)),
   ]);
   return json({ ok: true });
 }
@@ -327,9 +448,11 @@ export default {
     await init(env.DB);
 
     // agent 通道（Bearer AGENT_TOKEN）
-    if ((path === "/api/agent/heartbeat" || path === "/api/agent/scan") && req.method === "POST") {
+    if (["/api/agent/heartbeat", "/api/agent/scan", "/api/agent/diag"].includes(path) && req.method === "POST") {
       if (!(await agentAuth(req, env))) return json({ error: "unauthorized" }, 401);
-      return path === "/api/agent/scan" ? scanIngest(req, env) : heartbeat(req, env);
+      if (path === "/api/agent/scan") return scanIngest(req, env);
+      if (path === "/api/agent/diag") return diagIngest(req, env);
+      return heartbeat(req, env);
     }
     if (path === "/agent.py" || path === "/install.sh") {
       if (!(await agentAuth(req, env))) return text("unauthorized", 401);
@@ -366,6 +489,11 @@ export default {
       if (path === "/api/proxies" && req.method === "GET") return await proxies(req, env);
       if (path === "/api/scan" && req.method === "GET") return await scanList(req, env);
       if (path === "/api/scan/now" && req.method === "POST") return await scanNow(req, env);
+      if (path === "/api/route/preview" && req.method === "GET") return await routePreview(req, env);
+      if (path === "/api/diag" && req.method === "GET") return await diagList(env);
+      if (path === "/api/diag/run" && req.method === "POST") return await diagRun(req, env);
+      if (path === "/api/diag/port" && req.method === "GET") return await portCheck(req, env);
+      if (path === "/api/switch" && req.method === "POST") return await switchIp(req, env);
       if (path === "/api/policy" && req.method === "POST") return await setPolicy(req, env);
       if (path === "/api/rotate" && req.method === "POST") return await rotate(req, env);
       if (path === "/api/nodes/delete" && req.method === "POST") return await removeNode(req, env);

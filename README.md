@@ -59,6 +59,7 @@ agent 启动后每 15 分钟（`SCAN_INTERVAL` 环境变量，秒）自动扫描
 2. 从 VPS 实测到每个 IP 的延迟：TCP 节点测握手（3 次取中位数），UDP 节点测 ICMP，都失败才退回 VPNGate 自报值（面板标「自报」）。
 3. 结果上报到 Worker（D1 表 `scan_ips`），在面板「住宅 IP 扫描」区块按国家、类型、延迟筛选排序。
 4. 建链时 agent 优先使用扫描出的低延迟住宅 IP，并跳过已确认的机房 IP。
+5. **切换**：扫描清单每行有「切换」按钮，点击后该节点会改用这个 IP 建立隧道（固定模式下不再按国家策略和机房标记过滤）。连不上或质检失败会自动恢复自动选择；在节点行点「取消固定」也可恢复。API：`POST /api/switch {"node_id":"…","ip":"1.2.3.4"}`，`ip` 传空字符串即取消。
 
 ```bash
 curl -u admin:密码 "https://你的worker域名/api/scan?type=residential&country=JP,US&max_latency=150"   # JSON
@@ -68,6 +69,28 @@ curl -u admin:密码 "https://你的worker域名/api/scan?type=residential&forma
 参数：`type`（all/residential/hosting）、`country`（逗号分隔国家码）、`max_latency`（ms）、`reachable=1`、`limit`。
 
 > 老用户升级：直接重新部署 Worker（D1 会自动补列建表），VPS 上重新执行一遍面板里的安装命令即可更新 agent，并补装 `ping`。
+
+## 路由、代理服务与系统诊断
+
+**路由模式**（面板「路由与代理服务」）：三种模式都只在「目标国家」内挑选（`ANY` = 全球），并优先使用已扫描确认的住宅 IP。
+
+| 模式 | 排序依据 |
+| --- | --- |
+| 指定国家（`country`，默认） | VPNGate 评分 |
+| 延迟优先（`latency`） | 本 VPS 实测延迟最低 |
+| 速度优先（`speed`） | VPNGate 测速最高 |
+
+「路由预览」按当前模式列出 agent 下一次会优先尝试的前 5 个 IP（基于最近一次扫描）。切换模式会让节点按新规则重新选择；手动「切换」固定的 IP 优先级最高。
+
+**VPS 代理服务**：面板可启用 / 停用代理服务、设置最大连接数（超限直接拒绝并计数），并显示每个节点的监听状态、当前连接、累计 / 拒绝、上下行流量和已运行时长。
+
+**系统诊断**：点「运行诊断」（agent 启动 20 秒后也会自动跑一次），检查 root / TUN / OpenVPN 版本 / 命令依赖 / 负载内存磁盘 / 时钟偏差 / DNS / VPNGate 与 ip-api 连通 / 隧道出站与隧道内 DNS / 策略路由 / 代理监听与凭据 / **代理端到端自测**（用真实凭据走一遍 SOCKS5 经隧道访问外网），并由 Cloudflare 边缘探测代理端口是否对公网开放（排查防火墙、安全组）。
+
+```bash
+curl -u admin:密码 "https://你的worker域名/api/route/preview?limit=5"   # 路由预览
+curl -u admin:密码 "https://你的worker域名/api/diag"                    # 最近一次诊断结果
+curl -u admin:密码 -X POST -H 'content-type: application/json' -d '{"mode":"latency","country":"JP","port":7920,"max_conns":500,"proxy_enabled":true}' "https://你的worker域名/api/policy"
+```
 
 ## 目录
 
